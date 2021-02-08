@@ -206,10 +206,10 @@ static const char *status_format_str(char *buf, size_t buflen, size_t col, int c
       if (!optional)
       {
         snprintf(fmt, sizeof(fmt), "%%%ss", prec);
-        mutt_str_pretty_size(tmp, sizeof(tmp), Context ? Context->vsize : 0);
+        mutt_str_pretty_size(tmp, sizeof(tmp), Contex2 ? Contex2->vsize : 0);
         snprintf(buf, buflen, fmt, tmp);
       }
-      else if (!ctx_has_limit(Context))
+      else if (!ctx_has_limit(Contex2))
         optional = false;
       break;
 
@@ -232,7 +232,7 @@ static const char *status_format_str(char *buf, size_t buflen, size_t col, int c
         snprintf(fmt, sizeof(fmt), "%%%sd", prec);
         snprintf(buf, buflen, fmt, m ? m->vcount : 0);
       }
-      else if (!ctx_has_limit(Context))
+      else if (!ctx_has_limit(Contex2))
         optional = false;
       break;
 
@@ -385,9 +385,9 @@ static const char *status_format_str(char *buf, size_t buflen, size_t col, int c
       if (!optional)
       {
         snprintf(fmt, sizeof(fmt), "%%%ss", prec);
-        snprintf(buf, buflen, fmt, ctx_has_limit(Context) ? Context->pattern : "");
+        snprintf(buf, buflen, fmt, ctx_has_limit(Contex2) ? Contex2->pattern : "");
       }
-      else if (!ctx_has_limit(Context))
+      else if (!ctx_has_limit(Contex2))
         optional = false;
       break;
 

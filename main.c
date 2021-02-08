@@ -1136,7 +1136,7 @@ int main(int argc, char *argv[], char *envp[])
   {
     if (flags & MUTT_CLI_MAILBOX)
     {
-      struct Mailbox *m = ctx_mailbox(Context);
+      struct Mailbox *m = ctx_mailbox(Contex2);
 #ifdef USE_IMAP
       const bool c_imap_passive = cs_subset_bool(NeoMutt->sub, "imap_passive");
       cs_subset_str_native_set(NeoMutt->sub, "imap_passive", false, NULL);
@@ -1160,7 +1160,7 @@ int main(int argc, char *argv[], char *envp[])
         const char *const c_news_server =
             cs_subset_string(NeoMutt->sub, "news_server");
         OptNews = true;
-        CurrentNewsSrv = nntp_select_server(Context ? Context->mailbox : NULL,
+        CurrentNewsSrv = nntp_select_server(Contex2 ? Contex2->mailbox : NULL,
                                             c_news_server, false);
         if (!CurrentNewsSrv)
           goto main_curses; // TEST38: neomutt -G (unset news_server)
@@ -1174,7 +1174,7 @@ int main(int argc, char *argv[], char *envp[])
       }
       mutt_buffer_reset(&folder);
       mutt_buffer_select_file(&folder, MUTT_SEL_FOLDER | MUTT_SEL_MAILBOX,
-                              ctx_mailbox(Context), NULL, NULL);
+                              ctx_mailbox(Contex2), NULL, NULL);
       if (mutt_buffer_is_empty(&folder))
       {
         goto main_ok; // TEST40: neomutt -y (quit selection)
@@ -1234,8 +1234,8 @@ int main(int argc, char *argv[], char *envp[])
     repeat_error = true;
     struct Mailbox *m = mx_resolve(mutt_buffer_string(&folder));
     const bool c_read_only = cs_subset_bool(NeoMutt->sub, "read_only");
-    Context = mx_mbox_open(m, ((flags & MUTT_CLI_RO) || c_read_only) ? MUTT_READONLY : MUTT_OPEN_NO_FLAGS);
-    if (!Context)
+    Contex2 = mx_mbox_open(m, ((flags & MUTT_CLI_RO) || c_read_only) ? MUTT_READONLY : MUTT_OPEN_NO_FLAGS);
+    if (!Contex2)
     {
       if (m->account)
         account_mailbox_remove(m->account, m);
@@ -1244,19 +1244,19 @@ int main(int argc, char *argv[], char *envp[])
       mutt_error(_("Unable to open mailbox %s"), mutt_buffer_string(&folder));
       repeat_error = false;
     }
-    if (Context || !explicit_folder)
+    if (Contex2 || !explicit_folder)
     {
       struct MuttWindow *dlg = index_pager_init();
       dialog_push(dlg);
 
-      struct EventMailbox em = { Context ? Context->mailbox : NULL };
+      struct EventMailbox em = { Contex2 ? Contex2->mailbox : NULL };
       notify_send(dlg->notify, NT_MAILBOX, NT_MAILBOX_SWITCH, &em);
 
       mutt_index_menu(dlg);
       dialog_pop();
       index_pager_shutdown(dlg);
       mutt_window_free(&dlg);
-      ctx_free(&Context);
+      ctx_free(&Contex2);
       log_queue_empty();
       repeat_error = false;
     }

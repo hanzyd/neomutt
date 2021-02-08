@@ -107,7 +107,7 @@ static enum CommandResult parse_unreplace_list(struct Buffer *buf, struct Buffer
  */
 static void attachments_clean(void)
 {
-  struct Mailbox *m = ctx_mailbox(Context);
+  struct Mailbox *m = ctx_mailbox(Contex2);
   if (!m)
     return;
 
@@ -188,7 +188,7 @@ static enum CommandResult parse_unattach_list(struct Buffer *buf, struct Buffer 
  */
 static void clear_subject_mods(void)
 {
-  struct Mailbox *m = ctx_mailbox(Context);
+  struct Mailbox *m = ctx_mailbox(Contex2);
   if (!m)
     return;
 
@@ -365,7 +365,7 @@ static int print_attach_list(struct ListHead *h, const char op, const char *name
  */
 static void alternates_clean(void)
 {
-  struct Mailbox *m = ctx_mailbox(Context);
+  struct Mailbox *m = ctx_mailbox(Contex2);
   if (!m)
     return;
 
@@ -1938,7 +1938,7 @@ static void do_unmailboxes(struct Mailbox *m)
 #endif
   m->flags = MB_HIDDEN;
   m->gen = -1;
-  if (Context && (Context->mailbox == m))
+  if (Contex2 && (Contex2->mailbox == m))
   {
     struct EventMailbox em = { NULL };
     notify_send(NeoMutt->notify, NT_MAILBOX, NT_MAILBOX_SWITCH, &em);

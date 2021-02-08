@@ -76,7 +76,7 @@ static int get_color(int index, unsigned char *s)
 {
   struct ColorLineList *color = NULL;
   struct ColorLine *np = NULL;
-  struct Email *e = mutt_get_virt_email(Context->mailbox, index);
+  struct Email *e = mutt_get_virt_email(Contex2->mailbox, index);
   int type = *s;
 
   switch (type)
@@ -109,7 +109,7 @@ static int get_color(int index, unsigned char *s)
   STAILQ_FOREACH(np, color, entries)
   {
     if (mutt_pattern_exec(SLIST_FIRST(np->color_pattern),
-                          MUTT_MATCH_FULL_ADDRESS, Context->mailbox, e, NULL))
+                          MUTT_MATCH_FULL_ADDRESS, Contex2->mailbox, e, NULL))
       return np->pair;
   }
 
@@ -1553,7 +1553,7 @@ int mutt_menu_loop(struct Menu *menu)
       case OP_SHELL_ESCAPE:
         if (mutt_shell_escape())
         {
-          mutt_mailbox_check(ctx_mailbox(Context), MUTT_MAILBOX_CHECK_FORCE);
+          mutt_mailbox_check(ctx_mailbox(Contex2), MUTT_MAILBOX_CHECK_FORCE);
         }
         break;
 
@@ -1562,7 +1562,7 @@ int mutt_menu_loop(struct Menu *menu)
         break;
 
       case OP_CHECK_STATS:
-        mutt_check_stats(ctx_mailbox(Context));
+        mutt_check_stats(ctx_mailbox(Contex2));
         break;
 
       case OP_REDRAW:
@@ -1618,7 +1618,7 @@ int mutt_menu_color_observer(struct NotifyCallback *nc)
     return 0;
 
   // Colour deleted from a list
-  struct Mailbox *m = ctx_mailbox(Context);
+  struct Mailbox *m = ctx_mailbox(Contex2);
   if ((nc->event_subtype == NT_COLOR_RESET) && lists && m)
   {
     // Force re-caching of index colors
