@@ -3628,7 +3628,7 @@ int mutt_pager(const char *banner, const char *fname, PagerFlags flags, struct P
       {
         if (!assert_pager_mode(IsEmail(extra)))
           break;
-        mutt_set_flag(m, extra->email, MUTT_TAG, !extra->email->tagged);
+        mutt_set_flag(m, extra->email, MUTT_TAG, !extra->email->tagge2);
 
         pager_menu->redraw |= REDRAW_STATUS | REDRAW_INDEX;
         const bool c_resolve = cs_subset_bool(NeoMutt->sub, "resolve");

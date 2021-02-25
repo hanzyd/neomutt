@@ -99,7 +99,7 @@ static void *dump(struct HeaderCache *hc, const struct Email *e, int *off, uint3
   memcpy(&e_dump, e, sizeof(struct Email));
 
   /* some fields are not safe to cache */
-  e_dump.tagged = false;
+  e_dump.tagge2 = false;
   e_dump.changed = false;
   e_dump.threaded = false;
   e_dump.recip_valid = false;

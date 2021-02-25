@@ -764,7 +764,7 @@ int mutt_pattern_exec(struct Pattern *pat, PatternExecFlags flags,
     case MUTT_FLAG:
       return pat->pat_not ^ e->flagged;
     case MUTT_TAG:
-      return pat->pat_not ^ e->tagged;
+      return pat->pat_not ^ e->tagge2;
     case MUTT_NEW:
       return pat->pat_not ? e->old || e->read : !(e->old || e->read);
     case MUTT_UNREAD:

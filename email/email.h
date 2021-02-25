@@ -41,7 +41,7 @@ struct Email
 
   bool mime            : 1;    ///< Has a MIME-Version header?
   bool flagged         : 1;    ///< Marked important?
-  bool tagged          : 1;    ///< Email is tagged
+  bool tagge2          : 1;    ///< Email is tagged
   bool deleted         : 1;    ///< Email is deleted
   bool purge           : 1;    ///< Skip trash folder when deleting
   bool quasi_deleted   : 1;    ///< Deleted from neomutt, but not modified on disk

@@ -677,7 +677,7 @@ static int reopen_mailbox(struct Mailbox *m)
         }
         mutt_set_flag(m, m->emails[i], MUTT_DELETE, e_old[j]->deleted);
         mutt_set_flag(m, m->emails[i], MUTT_PURGE, e_old[j]->purge);
-        mutt_set_flag(m, m->emails[i], MUTT_TAG, e_old[j]->tagged);
+        mutt_set_flag(m, m->emails[i], MUTT_TAG, e_old[j]->tagge2);
 
         /* we don't need this header any more */
         email_free(&(e_old[j]));

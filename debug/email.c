@@ -165,7 +165,7 @@ void dump_email(const struct Email *e)
   ADD_FLAG(searched);
   ADD_FLAG(subject_changed);
   ADD_FLAG(superseded);
-  ADD_FLAG(tagged);
+  ADD_FLAG(tagge2);
   ADD_FLAG(threaded);
   ADD_FLAG(trash);
   ADD_FLAG(visible);

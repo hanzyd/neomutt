@@ -1098,7 +1098,7 @@ static const char *index_format_str(char *buf, size_t buflen, size_t col, int co
         wch = get_nth_wchar(c_flag_chars, FLAG_CHAR_DELETED);
       else if (e->attach_del)
         wch = get_nth_wchar(c_flag_chars, FLAG_CHAR_DELETED_ATTACH);
-      else if (e->tagged)
+      else if (e->tagge2)
         wch = get_nth_wchar(c_flag_chars, FLAG_CHAR_TAGGED);
       else if (e->flagged)
         wch = get_nth_wchar(c_flag_chars, FLAG_CHAR_IMPORTANT);
@@ -1302,7 +1302,7 @@ static const char *index_format_str(char *buf, size_t buflen, size_t col, int co
       else if (src[0] == 't') /* tagged, flagged, recipient */
       {
         const char *ch = "";
-        if (e->tagged)
+        if (e->tagge2)
           ch = get_nth_wchar(c_flag_chars, FLAG_CHAR_TAGGED);
         else if (e->flagged)
           ch = get_nth_wchar(c_flag_chars, FLAG_CHAR_IMPORTANT);
@@ -1362,7 +1362,7 @@ static const char *index_format_str(char *buf, size_t buflen, size_t col, int co
 
       /* Tagged, flagged and recipient flag */
       const char *third = "";
-      if (e->tagged)
+      if (e->tagge2)
         third = get_nth_wchar(c_flag_chars, FLAG_CHAR_TAGGED);
       else if (e->flagged)
         third = get_nth_wchar(c_flag_chars, FLAG_CHAR_IMPORTANT);

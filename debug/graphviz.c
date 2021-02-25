@@ -1336,7 +1336,7 @@ static void dot_email(FILE *fp, struct Email *e, struct ListHead *links)
   ADD_BOOL(searched);
   ADD_BOOL(subject_changed);
   ADD_BOOL(superseded);
-  ADD_BOOL(tagged);
+  ADD_BOOL(tagge2);
   ADD_BOOL(threaded);
   ADD_BOOL(trash);
   ADD_BOOL(visible);

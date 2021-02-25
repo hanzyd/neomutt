@@ -775,11 +775,11 @@ enum MxStatus mx_mbox_close(struct Context **ptr)
 
         if (e->read && !e->deleted && !(e->flagged && c_keep_flagged))
         {
-          e->tagged = true;
+          e->tagge2 = true;
           emaillist_add_email(&el, e);
         }
         else
-          e->tagged = false;
+          e->tagge2 = false;
       }
 
       i = imap_copy_messages(ctx->mailbox, &el, mutt_buffer_string(mbox), SAVE_MOVE);

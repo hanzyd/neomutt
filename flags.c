@@ -305,18 +305,18 @@ void mutt_set_flag_update(struct Mailbox *m, struct Email *e,
     case MUTT_TAG:
       if (bf)
       {
-        if (!e->tagged)
+        if (!e->tagge2)
         {
           update = true;
-          e->tagged = true;
+          e->tagge2 = true;
           if (upd_mbox)
             m->msg_tagged++;
         }
       }
-      else if (e->tagged)
+      else if (e->tagge2)
       {
         update = true;
-        e->tagged = false;
+        e->tagge2 = false;
         if (upd_mbox)
           m->msg_tagged--;
       }

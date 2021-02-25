@@ -238,7 +238,7 @@ static int make_msg_set(struct Mailbox *m, struct Buffer *buf,
             match = invert ^ e->replied;
           break;
         case MUTT_TAG:
-          if (e->tagged)
+          if (e->tagge2)
             match = true;
           break;
         case MUTT_TRASH:

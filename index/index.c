@@ -2026,7 +2026,7 @@ int mutt_index_menu(struct MuttWindow *dlg)
           if (!idata->cur.e)
             break;
           mutt_set_flag(idata->ctx->mailbox, idata->cur.e, MUTT_TAG,
-                        !idata->cur.e->tagged);
+                        !idata->cur.e->tagge2);
 
           menu->redraw |= REDRAW_STATUS;
           const bool c_resolve = cs_subset_bool(idata->sub, "resolve");
@@ -3971,7 +3971,7 @@ int mutt_index_menu(struct MuttWindow *dlg)
           break;
 
         int rc = mutt_thread_set_flag(ctx_mailbox(idata->ctx), idata->cur.e, MUTT_TAG,
-                                      !idata->cur.e->tagged, (op != OP_TAG_THREAD));
+                                      !idata->cur.e->tagge2, (op != OP_TAG_THREAD));
         if (rc != -1)
         {
           const bool c_resolve = cs_subset_bool(idata->sub, "resolve");

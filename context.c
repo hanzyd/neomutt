@@ -186,7 +186,7 @@ void ctx_update(struct Context *ctx)
       m->msg_flagged++;
     if (e->deleted)
       m->msg_deleted++;
-    if (e->tagged)
+    if (e->tagge2)
       m->msg_tagged++;
     if (!e->read)
     {
@@ -254,7 +254,7 @@ static void update_tables(struct Context *ctx)
           m->msg_deleted++;
       }
 
-      if (m->emails[j]->tagged)
+      if (m->emails[j]->tagge2)
         m->msg_tagged++;
       if (m->emails[j]->flagged)
         m->msg_flagged++;
@@ -334,7 +334,7 @@ int ctx_mailbox_observer(struct NotifyCallback *nc)
  */
 bool message_is_tagged(struct Email *e)
 {
-  return e->visible && e->tagged;
+  return e->visible && e->tagge2;
 }
 
 /**
