@@ -2555,7 +2555,7 @@ int mutt_pager(const char *banner, const char *fname, PagerFlags flags, struct P
 
             bool verbose = m->verbose;
             m->verbose = false;
-            mutt_update_index(rd.menu, extra->ctx, check, oldcount, e);
+            mutt_update_index(NeoMutt->sub, rd.menu, extra->ctx, check, oldcount, e);
             m->verbose = verbose;
 
             rd.menu->max = m->vcount;

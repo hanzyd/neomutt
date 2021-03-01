@@ -326,13 +326,14 @@ static int ci_previous_undeleted(struct Mailbox *m, int msgno)
 
 /**
  * ci_first_message - Get index of first new message
- * @param m Mailbox
+ * @param sub ConfigSubset
+ * @param m   Mailbox
  * @retval num Index of first new message
  *
  * Return the index of the first new message, or failing that, the first
  * unread message.
  */
-static int ci_first_message(struct Mailbox *m)
+static int ci_first_message(struct ConfigSubset *sub, struct Mailbox *m)
 {
   if (!m || (m->msg_count == 0))
     return 0;
@@ -357,8 +358,8 @@ static int ci_first_message(struct Mailbox *m)
   /* If `$sort` is reverse and not threaded, the latest message is first.
    * If `$sort` is threaded, the latest message is first if exactly one
    * of `$sort` and `$sort_aux` are reverse.  */
-  const short c_sort = cs_subset_sort(NeoMutt->sub, "sort");
-  const short c_sort_aux = cs_subset_sort(NeoMutt->sub, "sort_aux");
+  const short c_sort = cs_subset_sort(sub, "sort");
+  const short c_sort_aux = cs_subset_sort(sub, "sort_aux");
   if (((c_sort & SORT_REVERSE) && ((c_sort & SORT_MASK) != SORT_THREADS)) ||
       (((c_sort & SORT_MASK) == SORT_THREADS) && ((c_sort ^ c_sort_aux) & SORT_REVERSE)))
   {
@@ -407,10 +408,11 @@ static int mx_toggle_write(struct Mailbox *m)
 
 /**
  * resort_index - Resort the index
+ * @param sub  ConfigSubset
  * @param ctx  Context
  * @param menu Current Menu
  */
-static void resort_index(struct Context *ctx, struct Menu *menu)
+static void resort_index(struct ConfigSubset *sub, struct Context *ctx, struct Menu *menu)
 {
   if (!ctx || !ctx->mailbox || !menu)
     return;
@@ -433,30 +435,32 @@ static void resort_index(struct Context *ctx, struct Menu *menu)
     }
   }
 
-  const short c_sort = cs_subset_sort(NeoMutt->sub, "sort");
+  const short c_sort = cs_subset_sort(sub, "sort");
   if (((c_sort & SORT_MASK) == SORT_THREADS) && (menu->current < 0))
     menu->current = mutt_parent_message(e_cur, false);
 
   if (menu->current < 0)
-    menu->current = ci_first_message(ctx->mailbox);
+    menu->current = ci_first_message(sub, ctx->mailbox);
 
   menu->redraw |= REDRAW_INDEX | REDRAW_STATUS;
 }
 
 /**
  * update_index_threaded - Update the index (if threaded)
+ * @param sub      ConfigSubset
  * @param ctx      Mailbox
  * @param check    Flags, e.g. #MX_STATUS_REOPENED
  * @param oldcount How many items are currently in the index
  */
-static void update_index_threaded(struct Context *ctx, enum MxStatus check, int oldcount)
+static void update_index_threaded(struct ConfigSubset *sub, struct Context *ctx,
+                                  enum MxStatus check, int oldcount)
 {
   struct Email **save_new = NULL;
   const bool lmt = ctx_has_limit(ctx);
 
   int num_new = MAX(0, ctx->mailbox->msg_count - oldcount);
 
-  const bool c_uncollapse_new = cs_subset_bool(NeoMutt->sub, "uncollapse_new");
+  const bool c_uncollapse_new = cs_subset_bool(sub, "uncollapse_new");
   /* save the list of new messages */
   if ((check != MX_STATUS_REOPENED) && (oldcount > 0) &&
       (lmt || c_uncollapse_new) && (num_new > 0))
@@ -590,21 +594,23 @@ static void set_current_email(struct CurrentEmail *cur, struct Email *e)
 
 /**
  * update_index - Update the index
+ * @param sub        ConfigSubset
  * @param menu       Current Menu
  * @param ctx        Mailbox
  * @param check      Flags, e.g. #MX_STATUS_REOPENED
  * @param oldcount   How many items are currently in the index
  * @param cur        Remember our place in the index
  */
-static void update_index(struct Menu *menu, struct Context *ctx, enum MxStatus check,
-                         int oldcount, const struct CurrentEmail *cur)
+static void update_index(struct ConfigSubset *sub, struct Menu *menu,
+                         struct Context *ctx, enum MxStatus check, int oldcount,
+                         const struct CurrentEmail *cur)
 {
   if (!menu || !ctx)
     return;
 
-  const short c_sort = cs_subset_sort(NeoMutt->sub, "sort");
+  const short c_sort = cs_subset_sort(sub, "sort");
   if ((c_sort & SORT_MASK) == SORT_THREADS)
-    update_index_threaded(ctx, check, oldcount);
+    update_index_threaded(sub, ctx, check, oldcount);
   else
     update_index_unthreaded(ctx, check);
 
@@ -630,25 +636,26 @@ static void update_index(struct Menu *menu, struct Context *ctx, enum MxStatus c
   {
     menu->current = (old_current < ctx->mailbox->vcount) ?
                         old_current :
-                        ci_first_message(ctx->mailbox);
+                        ci_first_message(sub, ctx->mailbox);
   }
 }
 
 /**
  * mutt_update_index - Update the index
+ * @param sub       ConfigSubset
  * @param menu      Current Menu
  * @param ctx       Mailbox
- * @param check     Flags, e.g. #MX_STATUS_REOPENED
+ * @param check     Flags, e.g. #NeoMutt->MX_STATUS_REOPENED
  * @param oldcount  How many items are currently in the index
  * @param cur_email Currently selected email
  *
  * @note cur_email cannot be NULL
  */
-void mutt_update_index(struct Menu *menu, struct Context *ctx, enum MxStatus check,
-                       int oldcount, const struct Email *cur_email)
+void mutt_update_index(struct ConfigSubset *sub, struct Menu *menu, struct Context *ctx,
+                       enum MxStatus check, int oldcount, const struct Email *cur_email)
 {
   struct CurrentEmail se = { .e = NULL, .sequence = cur_email->sequence };
-  update_index(menu, ctx, check, oldcount, &se);
+  update_index(sub, menu, ctx, check, oldcount, &se);
 }
 
 /**
@@ -718,7 +725,7 @@ static void change_folder_mailbox(struct Menu *menu, struct Mailbox *m, int *old
         mutt_monitor_add(NULL);
 #endif
       if ((check == MX_STATUS_NEW_MAIL) || (check == MX_STATUS_REOPENED))
-        update_index(menu, idata->ctx, check, *oldcount, cur);
+        update_index(idata->sub, menu, idata->ctx, check, *oldcount, cur);
 
       FREE(&new_last_folder);
       OptSearchInvalid = true;
@@ -759,7 +766,7 @@ static void change_folder_mailbox(struct Menu *menu, struct Mailbox *m, int *old
   Contex2 = idata->ctx;
   if (idata->ctx)
   {
-    menu->current = ci_first_message(idata->ctx->mailbox);
+    menu->current = ci_first_message(idata->sub, idata->ctx->mailbox);
 #ifdef USE_INOTIFY
     mutt_monitor_add(NULL);
 #endif
@@ -813,6 +820,7 @@ static struct Mailbox *change_folder_notmuch(struct Menu *menu, char *buf,
 
 /**
  * change_folder_string - Change to a different Mailbox by string
+ * @param sub          ConfigSubset
  * @param menu         Current Menu
  * @param buf          Folder to change to
  * @param buflen       Length of buffer
@@ -821,8 +829,9 @@ static struct Mailbox *change_folder_notmuch(struct Menu *menu, char *buf,
  * @param pager_return Return to the pager afterwards
  * @param read_only    Open Mailbox in read-only mode
  */
-static void change_folder_string(struct Menu *menu, char *buf, size_t buflen,
-                                 int *oldcount, const struct CurrentEmail *cur,
+static void change_folder_string(struct ConfigSubset *sub, struct Menu *menu,
+                                 char *buf, size_t buflen, int *oldcount,
+                                 const struct CurrentEmail *cur,
                                  bool *pager_return, bool read_only)
 {
 #ifdef USE_NNTP
@@ -834,7 +843,7 @@ static void change_folder_string(struct Menu *menu, char *buf, size_t buflen,
   else
 #endif
   {
-    const char *const c_folder = cs_subset_string(NeoMutt->sub, "folder");
+    const char *const c_folder = cs_subset_string(sub, "folder");
     mx_path_canon(buf, buflen, c_folder, NULL);
   }
 
@@ -1206,7 +1215,7 @@ int mutt_index_menu(struct MuttWindow *dlg)
 
   menu->make_entry = index_make_entry;
   menu->color = index_color;
-  menu->current = idata->ctx ? ci_first_message(idata->ctx->mailbox) : 0;
+  menu->current = idata->ctx ? ci_first_message(idata->sub, idata->ctx->mailbox) : 0;
   menu->custom_redraw = index_custom_redraw;
   menu->mdata = idata;
   mutt_menu_push_current(menu);
@@ -1222,8 +1231,8 @@ int mutt_index_menu(struct MuttWindow *dlg)
 #endif
 
   {
-    const short c_sort = cs_subset_sort(NeoMutt->sub, "sort");
-    const bool c_collapse_all = cs_subset_bool(NeoMutt->sub, "collapse_all");
+    const short c_sort = cs_subset_sort(idata->sub, "sort");
+    const bool c_collapse_all = cs_subset_bool(idata->sub, "collapse_all");
     if (((c_sort & SORT_MASK) == SORT_THREADS) && c_collapse_all)
     {
       collapse_all(idata->ctx, menu, 0);
@@ -1244,14 +1253,14 @@ int mutt_index_menu(struct MuttWindow *dlg)
     if (OptNeedResort && ctx_mailbox(idata->ctx) &&
         (idata->ctx->mailbox->msg_count != 0) && (menu->current >= 0))
     {
-      resort_index(idata->ctx, menu);
+      resort_index(idata->sub, idata->ctx, menu);
     }
 
     menu->max = ctx_mailbox(idata->ctx) ? idata->ctx->mailbox->vcount : 0;
     idata->oldcount = ctx_mailbox(idata->ctx) ? idata->ctx->mailbox->msg_count : 0;
 
     {
-      const short c_sort = cs_subset_sort(NeoMutt->sub, "sort");
+      const short c_sort = cs_subset_sort(idata->sub, "sort");
       if (OptRedrawTree && ctx_mailbox(idata->ctx) &&
           (idata->ctx->mailbox->msg_count != 0) && ((c_sort & SORT_MASK) == SORT_THREADS))
       {
@@ -1300,11 +1309,11 @@ int mutt_index_menu(struct MuttWindow *dlg)
             if (e && !e->read && !e->old)
             {
               mutt_message(_("New mail in this mailbox"));
-              const bool c_beep_new = cs_subset_bool(NeoMutt->sub, "beep_new");
+              const bool c_beep_new = cs_subset_bool(idata->sub, "beep_new");
               if (c_beep_new)
                 mutt_beep(true);
               const char *const c_new_mail_command =
-                  cs_subset_string(NeoMutt->sub, "new_mail_command");
+                  cs_subset_string(idata->sub, "new_mail_command");
               if (c_new_mail_command)
               {
                 char cmd[1024];
@@ -1327,7 +1336,8 @@ int mutt_index_menu(struct MuttWindow *dlg)
 
         bool verbose = idata->ctx->mailbox->verbose;
         idata->ctx->mailbox->verbose = false;
-        update_index(menu, idata->ctx, check, idata->oldcount, &idata->cur);
+        update_index(idata->sub, menu, idata->ctx, check, idata->oldcount,
+                     &idata->cur);
         idata->ctx->mailbox->verbose = verbose;
         menu->max = idata->ctx->mailbox->vcount;
         menu->redraw = REDRAW_FULL;
@@ -1354,11 +1364,11 @@ int mutt_index_menu(struct MuttWindow *dlg)
         if (mutt_mailbox_notify(m))
         {
           menu->redraw |= REDRAW_STATUS;
-          const bool c_beep_new = cs_subset_bool(NeoMutt->sub, "beep_new");
+          const bool c_beep_new = cs_subset_bool(idata->sub, "beep_new");
           if (c_beep_new)
             mutt_beep(true);
           const char *const c_new_mail_command =
-              cs_subset_string(NeoMutt->sub, "new_mail_command");
+              cs_subset_string(idata->sub, "new_mail_command");
           if (c_new_mail_command)
           {
             char cmd[1024];
@@ -1401,9 +1411,9 @@ int mutt_index_menu(struct MuttWindow *dlg)
       else
         menu->oldcurrent = -1;
 
-      const bool c_arrow_cursor = cs_subset_bool(NeoMutt->sub, "arrow_cursor");
+      const bool c_arrow_cursor = cs_subset_bool(idata->sub, "arrow_cursor");
       const bool c_braille_friendly =
-          cs_subset_bool(NeoMutt->sub, "braille_friendly");
+          cs_subset_bool(idata->sub, "braille_friendly");
       if (c_arrow_cursor)
         mutt_window_move(menu->win_index, 2, menu->current - menu->top);
       else if (c_braille_friendly)
@@ -1443,7 +1453,7 @@ int mutt_index_menu(struct MuttWindow *dlg)
       mutt_curses_set_cursor(MUTT_CURSOR_VISIBLE);
 
       /* special handling for the tag-prefix function */
-      const bool c_auto_tag = cs_subset_bool(NeoMutt->sub, "auto_tag");
+      const bool c_auto_tag = cs_subset_bool(idata->sub, "auto_tag");
       if ((op == OP_TAG_PREFIX) || (op == OP_TAG_PREFIX_COND))
       {
         /* A second tag-prefix command aborts */
@@ -1893,11 +1903,11 @@ int mutt_index_menu(struct MuttWindow *dlg)
           }
           else
             menu->current = 0;
-          const short c_sort = cs_subset_sort(NeoMutt->sub, "sort");
+          const short c_sort = cs_subset_sort(idata->sub, "sort");
           if ((idata->ctx->mailbox->msg_count != 0) && ((c_sort & SORT_MASK) == SORT_THREADS))
           {
             const bool c_collapse_all =
-                cs_subset_bool(NeoMutt->sub, "collapse_all");
+                cs_subset_bool(idata->sub, "collapse_all");
             if (c_collapse_all)
               collapse_all(idata->ctx, menu, 0);
             mutt_draw_tree(idata->ctx->threads);
@@ -1918,7 +1928,7 @@ int mutt_index_menu(struct MuttWindow *dlg)
           break;
         }
 
-        const enum QuadOption c_quit = cs_subset_quad(NeoMutt->sub, "quit");
+        const enum QuadOption c_quit = cs_subset_quad(idata->sub, "quit");
         if (query_quadoption(c_quit, _("Quit NeoMutt?")) == MUTT_YES)
         {
           idata->oldcount =
@@ -1937,7 +1947,8 @@ int mutt_index_menu(struct MuttWindow *dlg)
           {
             if ((check == MX_STATUS_NEW_MAIL) || (check == MX_STATUS_REOPENED))
             {
-              update_index(menu, idata->ctx, check, idata->oldcount, &idata->cur);
+              update_index(idata->sub, menu, idata->ctx, check, idata->oldcount,
+                           &idata->cur);
             }
 
             menu->redraw = REDRAW_FULL; /* new mail arrived? */
@@ -1980,7 +1991,7 @@ int mutt_index_menu(struct MuttWindow *dlg)
 
         if (ctx_mailbox(idata->ctx) && (idata->ctx->mailbox->msg_count != 0))
         {
-          resort_index(idata->ctx, menu);
+          resort_index(idata->sub, idata->ctx, menu);
           OptSearchInvalid = true;
         }
         if (idata->in_pager)
@@ -1995,7 +2006,7 @@ int mutt_index_menu(struct MuttWindow *dlg)
       {
         if (!prereq(idata->ctx, menu, CHECK_IN_MAILBOX | CHECK_MSGCOUNT | CHECK_VISIBLE))
           break;
-        const bool c_auto_tag = cs_subset_bool(NeoMutt->sub, "auto_tag");
+        const bool c_auto_tag = cs_subset_bool(idata->sub, "auto_tag");
         if (idata->tag && !c_auto_tag)
         {
           struct Mailbox *m = idata->ctx->mailbox;
@@ -2017,7 +2028,7 @@ int mutt_index_menu(struct MuttWindow *dlg)
                         !idata->cur.e->tagged);
 
           menu->redraw |= REDRAW_STATUS;
-          const bool c_resolve = cs_subset_bool(NeoMutt->sub, "resolve");
+          const bool c_resolve = cs_subset_bool(idata->sub, "resolve");
           if (c_resolve && (menu->current < idata->ctx->mailbox->vcount - 1))
           {
             menu->current++;
@@ -2066,7 +2077,7 @@ int mutt_index_menu(struct MuttWindow *dlg)
           break;
         struct EmailList el = STAILQ_HEAD_INITIALIZER(el);
         el_add_tagged(&el, idata->ctx, idata->cur.e, idata->tag);
-        mutt_send_message(SEND_TO_SENDER, NULL, NULL, idata->ctx, &el, NeoMutt->sub);
+        mutt_send_message(SEND_TO_SENDER, NULL, NULL, idata->ctx, &el, idata->sub);
         emaillist_clear(&el);
         menu->redraw = REDRAW_FULL;
         break;
@@ -2091,7 +2102,8 @@ int mutt_index_menu(struct MuttWindow *dlg)
           {
             if ((check == MX_STATUS_NEW_MAIL) || (check == MX_STATUS_REOPENED))
             {
-              update_index(menu, idata->ctx, check, idata->oldcount, &idata->cur);
+              update_index(idata->sub, menu, idata->ctx, check, idata->oldcount,
+                           &idata->cur);
             }
             OptSearchInvalid = true;
             menu->redraw = REDRAW_FULL;
@@ -2151,7 +2163,7 @@ int mutt_index_menu(struct MuttWindow *dlg)
           }
           else if ((check == MX_STATUS_NEW_MAIL) || (check == MX_STATUS_REOPENED))
           {
-            update_index(menu, idata->ctx, check, oc, &idata->cur);
+            update_index(idata->sub, menu, idata->ctx, check, oc, &idata->cur);
           }
 
           /* do a sanity check even if mx_mbox_sync failed.  */
@@ -2159,7 +2171,7 @@ int mutt_index_menu(struct MuttWindow *dlg)
           if ((menu->current < 0) ||
               (ctx_mailbox(idata->ctx) && (menu->current >= idata->ctx->mailbox->vcount)))
           {
-            menu->current = ci_first_message(idata->ctx->mailbox);
+            menu->current = ci_first_message(idata->sub, idata->ctx->mailbox);
           }
         }
 
@@ -2365,7 +2377,7 @@ int mutt_index_menu(struct MuttWindow *dlg)
             op = OP_DISPLAY_MESSAGE;
             continue;
           }
-          const bool c_resolve = cs_subset_bool(NeoMutt->sub, "resolve");
+          const bool c_resolve = cs_subset_bool(idata->sub, "resolve");
           if (c_resolve)
           {
             menu->current = ci_next_undeleted(idata->ctx->mailbox, menu->current);
@@ -2424,14 +2436,14 @@ int mutt_index_menu(struct MuttWindow *dlg)
         if (!prereq(idata->ctx, menu, CHECK_IN_MAILBOX))
           break;
         const short c_nm_query_window_duration =
-            cs_subset_number(NeoMutt->sub, "nm_query_window_duration");
+            cs_subset_number(idata->sub, "nm_query_window_duration");
         if (c_nm_query_window_duration <= 0)
         {
           mutt_message(_("Windowed queries disabled"));
           break;
         }
         const char *const c_nm_query_window_current_search =
-            cs_subset_string(NeoMutt->sub, "nm_query_window_current_search");
+            cs_subset_string(idata->sub, "nm_query_window_current_search");
         if (!c_nm_query_window_current_search)
         {
           mutt_message(_("No notmuch vfolder currently loaded"));
@@ -2449,14 +2461,14 @@ int mutt_index_menu(struct MuttWindow *dlg)
         if (!prereq(idata->ctx, menu, CHECK_IN_MAILBOX))
           break;
         const short c_nm_query_window_duration =
-            cs_subset_number(NeoMutt->sub, "nm_query_window_duration");
+            cs_subset_number(idata->sub, "nm_query_window_duration");
         if (c_nm_query_window_duration <= 0)
         {
           mutt_message(_("Windowed queries disabled"));
           break;
         }
         const char *const c_nm_query_window_current_search =
-            cs_subset_string(NeoMutt->sub, "nm_query_window_current_search");
+            cs_subset_string(idata->sub, "nm_query_window_current_search");
         if (!c_nm_query_window_current_search)
         {
           mutt_message(_("No notmuch vfolder currently loaded"));
@@ -2514,7 +2526,7 @@ int mutt_index_menu(struct MuttWindow *dlg)
 
         char *cp = NULL;
         bool read_only;
-        const bool c_read_only = cs_subset_bool(NeoMutt->sub, "read_only");
+        const bool c_read_only = cs_subset_bool(idata->sub, "read_only");
         if (idata->attach_msg || c_read_only || (op == OP_MAIN_CHANGE_FOLDER_READONLY))
         {
           cp = _("Open mailbox in read-only mode");
@@ -2527,7 +2539,7 @@ int mutt_index_menu(struct MuttWindow *dlg)
         }
 
         const bool c_change_folder_next =
-            cs_subset_bool(NeoMutt->sub, "change_folder_next");
+            cs_subset_bool(idata->sub, "change_folder_next");
         if (c_change_folder_next && ctx_mailbox(idata->ctx) &&
             !mutt_buffer_is_empty(&idata->ctx->mailbox->pathbuf))
         {
@@ -2558,8 +2570,8 @@ int mutt_index_menu(struct MuttWindow *dlg)
         }
         else
         {
-          change_folder_string(menu, folderbuf->data, folderbuf->dsize, &idata->oldcount,
-                               &idata->cur, &pager_return, read_only);
+          change_folder_string(idata->sub, menu, folderbuf->data, folderbuf->dsize,
+                               &idata->oldcount, &idata->cur, &pager_return, read_only);
         }
 
       changefoldercleanup:
@@ -2583,7 +2595,7 @@ int mutt_index_menu(struct MuttWindow *dlg)
         OptNews = false;
         bool read_only;
         char *cp = NULL;
-        const bool c_read_only = cs_subset_bool(NeoMutt->sub, "read_only");
+        const bool c_read_only = cs_subset_bool(idata->sub, "read_only");
         if (idata->attach_msg || c_read_only || (op == OP_MAIN_CHANGE_GROUP_READONLY))
         {
           cp = _("Open newsgroup in read-only mode");
@@ -2596,7 +2608,7 @@ int mutt_index_menu(struct MuttWindow *dlg)
         }
 
         const bool c_change_folder_next =
-            cs_subset_bool(NeoMutt->sub, "change_folder_next");
+            cs_subset_bool(idata->sub, "change_folder_next");
         if (c_change_folder_next && ctx_mailbox(idata->ctx) &&
             !mutt_buffer_is_empty(&idata->ctx->mailbox->pathbuf))
         {
@@ -2636,8 +2648,8 @@ int mutt_index_menu(struct MuttWindow *dlg)
         }
         else
         {
-          change_folder_string(menu, folderbuf->data, folderbuf->dsize, &idata->oldcount,
-                               &idata->cur, &pager_return, read_only);
+          change_folder_string(idata->sub, menu, folderbuf->data, folderbuf->dsize,
+                               &idata->oldcount, &idata->cur, &pager_return, read_only);
         }
         dlg->help_data = IndexNewsHelp;
 
@@ -2662,23 +2674,23 @@ int mutt_index_menu(struct MuttWindow *dlg)
         /* toggle the weeding of headers so that a user can press the key
          * again while reading the message.  */
         if (op == OP_DISPLAY_HEADERS)
-          bool_str_toggle(NeoMutt->sub, "weed", NULL);
+          bool_str_toggle(idata->sub, "weed", NULL);
 
         OptNeedResort = false;
 
-        const short c_sort = cs_subset_sort(NeoMutt->sub, "sort");
+        const short c_sort = cs_subset_sort(idata->sub, "sort");
         if (((c_sort & SORT_MASK) == SORT_THREADS) && idata->cur.e->collapsed)
         {
           mutt_uncollapse_thread(idata->cur.e);
           mutt_set_vnum(idata->ctx->mailbox);
           const bool c_uncollapse_jump =
-              cs_subset_bool(NeoMutt->sub, "uncollapse_jump");
+              cs_subset_bool(idata->sub, "uncollapse_jump");
           if (c_uncollapse_jump)
             menu->current = mutt_thread_next_unread(idata->cur.e);
         }
 
         const bool c_pgp_auto_decode =
-            cs_subset_bool(NeoMutt->sub, "pgp_auto_decode");
+            cs_subset_bool(idata->sub, "pgp_auto_decode");
         if (c_pgp_auto_decode &&
             (idata->tag || !(idata->cur.e->security & PGP_TRADITIONAL_CHECKED)))
         {
@@ -2705,7 +2717,7 @@ int mutt_index_menu(struct MuttWindow *dlg)
         idata->in_pager = true;
         menu->oldcurrent = menu->current;
         if (ctx_mailbox(idata->ctx))
-          update_index(menu, idata->ctx, MX_STATUS_NEW_MAIL,
+          update_index(idata->sub, menu, idata->ctx, MX_STATUS_NEW_MAIL,
                        idata->ctx->mailbox->msg_count, &idata->cur);
         continue;
       }
@@ -2718,7 +2730,7 @@ int mutt_index_menu(struct MuttWindow *dlg)
           break;
         }
 
-        const enum QuadOption c_quit = cs_subset_quad(NeoMutt->sub, "quit");
+        const enum QuadOption c_quit = cs_subset_quad(idata->sub, "quit");
         if ((!idata->in_pager) &&
             (query_quadoption(c_quit, _("Exit NeoMutt without saving?")) == MUTT_YES))
         {
@@ -2742,7 +2754,7 @@ int mutt_index_menu(struct MuttWindow *dlg)
         if (!idata->cur.e)
           break;
 
-        const short c_sort = cs_subset_sort(NeoMutt->sub, "sort");
+        const short c_sort = cs_subset_sort(idata->sub, "sort");
         if ((c_sort & SORT_MASK) != SORT_THREADS)
           mutt_error(_("Threading is not enabled"));
         else if (!STAILQ_EMPTY(&idata->cur.e->env->in_reply_to) ||
@@ -2784,7 +2796,7 @@ int mutt_index_menu(struct MuttWindow *dlg)
         if (!idata->cur.e)
           break;
 
-        const short c_sort = cs_subset_sort(NeoMutt->sub, "sort");
+        const short c_sort = cs_subset_sort(idata->sub, "sort");
         if ((c_sort & SORT_MASK) != SORT_THREADS)
           mutt_error(_("Threading is not enabled"));
         else if (!idata->cur.e->env->message_id)
@@ -2954,7 +2966,7 @@ int mutt_index_menu(struct MuttWindow *dlg)
         if ((rc == 0) && (save_opt == SAVE_MOVE))
         {
           menu->redraw |= REDRAW_STATUS;
-          const bool c_resolve = cs_subset_bool(NeoMutt->sub, "resolve");
+          const bool c_resolve = cs_subset_bool(idata->sub, "resolve");
           if (idata->tag)
             menu->redraw |= REDRAW_INDEX;
           else if (c_resolve)
@@ -3014,7 +3026,7 @@ int mutt_index_menu(struct MuttWindow *dlg)
           struct Email *e = mutt_get_virt_email(idata->ctx->mailbox, mcur);
           if (!e)
             break;
-          const short c_sort = cs_subset_sort(NeoMutt->sub, "sort");
+          const short c_sort = cs_subset_sort(idata->sub, "sort");
           if (e->collapsed && ((c_sort & SORT_MASK) == SORT_THREADS))
           {
             int unread = mutt_thread_contains_unread(e);
@@ -3123,7 +3135,7 @@ int mutt_index_menu(struct MuttWindow *dlg)
           if (!idata->cur.e)
             break;
           mutt_set_flag(m, idata->cur.e, MUTT_FLAG, !idata->cur.e->flagged);
-          const bool c_resolve = cs_subset_bool(NeoMutt->sub, "resolve");
+          const bool c_resolve = cs_subset_bool(idata->sub, "resolve");
           if (c_resolve)
           {
             menu->current = ci_next_undeleted(idata->ctx->mailbox, menu->current);
@@ -3177,7 +3189,7 @@ int mutt_index_menu(struct MuttWindow *dlg)
           else
             mutt_set_flag(m, idata->cur.e, MUTT_READ, true);
 
-          const bool c_resolve = cs_subset_bool(NeoMutt->sub, "resolve");
+          const bool c_resolve = cs_subset_bool(idata->sub, "resolve");
           if (c_resolve)
           {
             menu->current = ci_next_undeleted(idata->ctx->mailbox, menu->current);
@@ -3290,7 +3302,7 @@ int mutt_index_menu(struct MuttWindow *dlg)
         if (mutt_change_flag(idata->ctx->mailbox, &el, (op == OP_MAIN_SET_FLAG)) == 0)
         {
           menu->redraw |= REDRAW_STATUS;
-          const bool c_resolve = cs_subset_bool(NeoMutt->sub, "resolve");
+          const bool c_resolve = cs_subset_bool(idata->sub, "resolve");
           if (idata->tag)
             menu->redraw |= REDRAW_INDEX;
           else if (c_resolve)
@@ -3316,7 +3328,7 @@ int mutt_index_menu(struct MuttWindow *dlg)
         if (!prereq(idata->ctx, menu, CHECK_IN_MAILBOX | CHECK_MSGCOUNT | CHECK_VISIBLE))
           break;
 
-        const short c_sort = cs_subset_sort(NeoMutt->sub, "sort");
+        const short c_sort = cs_subset_sort(idata->sub, "sort");
         if ((c_sort & SORT_MASK) != SORT_THREADS)
         {
           mutt_error(_("Threading is not enabled"));
@@ -3331,7 +3343,7 @@ int mutt_index_menu(struct MuttWindow *dlg)
           menu->current = mutt_uncollapse_thread(idata->cur.e);
           mutt_set_vnum(idata->ctx->mailbox);
           const bool c_uncollapse_jump =
-              cs_subset_bool(NeoMutt->sub, "uncollapse_jump");
+              cs_subset_bool(idata->sub, "uncollapse_jump");
           if (c_uncollapse_jump)
             menu->current = mutt_thread_next_unread(idata->cur.e);
         }
@@ -3356,7 +3368,7 @@ int mutt_index_menu(struct MuttWindow *dlg)
         if (!prereq(idata->ctx, menu, CHECK_IN_MAILBOX))
           break;
 
-        const short c_sort = cs_subset_sort(NeoMutt->sub, "sort");
+        const short c_sort = cs_subset_sort(idata->sub, "sort");
         if ((c_sort & SORT_MASK) != SORT_THREADS)
         {
           mutt_error(_("Threading is not enabled"));
@@ -3386,7 +3398,7 @@ int mutt_index_menu(struct MuttWindow *dlg)
         struct AddressList *al = NULL;
         if (idata->cur.e && idata->cur.e->env)
           al = mutt_get_address(idata->cur.e->env, NULL);
-        alias_create(al, NeoMutt->sub);
+        alias_create(al, idata->sub);
         menu->redraw |= REDRAW_CURRENT;
         break;
       }
@@ -3394,7 +3406,7 @@ int mutt_index_menu(struct MuttWindow *dlg)
       case OP_QUERY:
         if (!prereq(idata->ctx, menu, CHECK_ATTACH))
           break;
-        query_index(NeoMutt->sub);
+        query_index(idata->sub);
         break;
 
       case OP_PURGE_MESSAGE:
@@ -3409,10 +3421,9 @@ int mutt_index_menu(struct MuttWindow *dlg)
         struct EmailList el = STAILQ_HEAD_INITIALIZER(el);
         el_add_tagged(&el, idata->ctx, idata->cur.e, idata->tag);
 
-        mutt_emails_set_flag(Contex2->mailbox, &el, MUTT_DELETE, true);
-        mutt_emails_set_flag(Contex2->mailbox, &el, MUTT_PURGE, (op == OP_PURGE_MESSAGE));
-        const bool c_delete_untag =
-            cs_subset_bool(NeoMutt->sub, "delete_untag");
+        mutt_emails_set_flag(idata->ctx->mailbox, &el, MUTT_DELETE, true);
+        mutt_emails_set_flag(idata->ctx->mailbox, &el, MUTT_PURGE, (op == OP_PURGE_MESSAGE));
+        const bool c_delete_untag = cs_subset_bool(idata->sub, "delete_untag");
         if (c_delete_untag)
           mutt_emails_set_flag(Contex2->mailbox, &el, MUTT_TAG, false);
         emaillist_clear(&el);
@@ -3423,7 +3434,7 @@ int mutt_index_menu(struct MuttWindow *dlg)
         }
         else
         {
-          const bool c_resolve = cs_subset_bool(NeoMutt->sub, "resolve");
+          const bool c_resolve = cs_subset_bool(idata->sub, "resolve");
           if (c_resolve)
           {
             menu->current = ci_next_undeleted(idata->ctx->mailbox, menu->current);
@@ -3475,12 +3486,11 @@ int mutt_index_menu(struct MuttWindow *dlg)
             break;
         }
 
-        const bool c_delete_untag =
-            cs_subset_bool(NeoMutt->sub, "delete_untag");
+        const bool c_delete_untag = cs_subset_bool(idata->sub, "delete_untag");
         if (c_delete_untag)
           mutt_thread_set_flag(ctx_mailbox(idata->ctx), idata->cur.e, MUTT_TAG,
                                false, subthread);
-        const bool c_resolve = cs_subset_bool(NeoMutt->sub, "resolve");
+        const bool c_resolve = cs_subset_bool(idata->sub, "resolve");
         if (c_resolve)
         {
           menu->current = ci_next_undeleted(idata->ctx->mailbox, menu->current);
@@ -3548,7 +3558,7 @@ int mutt_index_menu(struct MuttWindow *dlg)
         if (!idata->cur.e)
           break;
         const bool c_pgp_auto_decode =
-            cs_subset_bool(NeoMutt->sub, "pgp_auto_decode");
+            cs_subset_bool(idata->sub, "pgp_auto_decode");
         if (c_pgp_auto_decode &&
             (idata->tag || !(idata->cur.e->security & PGP_TRADITIONAL_CHECKED)))
         {
@@ -3575,13 +3585,13 @@ int mutt_index_menu(struct MuttWindow *dlg)
         struct EmailList el = STAILQ_HEAD_INITIALIZER(el);
         el_add_tagged(&el, idata->ctx, idata->cur.e, idata->tag);
         const bool c_pgp_auto_decode =
-            cs_subset_bool(NeoMutt->sub, "pgp_auto_decode");
+            cs_subset_bool(idata->sub, "pgp_auto_decode");
         if (c_pgp_auto_decode &&
             (idata->tag || !(idata->cur.e->security & PGP_TRADITIONAL_CHECKED)))
         {
           mutt_check_traditional_pgp(ctx_mailbox(idata->ctx), &el, &menu->redraw);
         }
-        mutt_send_message(SEND_FORWARD, NULL, NULL, idata->ctx, &el, NeoMutt->sub);
+        mutt_send_message(SEND_FORWARD, NULL, NULL, idata->ctx, &el, idata->sub);
         emaillist_clear(&el);
         menu->redraw = REDRAW_FULL;
         break;
@@ -3606,13 +3616,13 @@ int mutt_index_menu(struct MuttWindow *dlg)
         struct EmailList el = STAILQ_HEAD_INITIALIZER(el);
         el_add_tagged(&el, idata->ctx, idata->cur.e, idata->tag);
         const bool c_pgp_auto_decode =
-            cs_subset_bool(NeoMutt->sub, "pgp_auto_decode");
+            cs_subset_bool(idata->sub, "pgp_auto_decode");
         if (c_pgp_auto_decode &&
             (idata->tag || !(idata->cur.e->security & PGP_TRADITIONAL_CHECKED)))
         {
           mutt_check_traditional_pgp(ctx_mailbox(idata->ctx), &el, &menu->redraw);
         }
-        mutt_send_message(replyflags, NULL, NULL, idata->ctx, &el, NeoMutt->sub);
+        mutt_send_message(replyflags, NULL, NULL, idata->ctx, &el, idata->sub);
         emaillist_clear(&el);
         menu->redraw = REDRAW_FULL;
         break;
@@ -3656,14 +3666,14 @@ int mutt_index_menu(struct MuttWindow *dlg)
         struct EmailList el = STAILQ_HEAD_INITIALIZER(el);
         el_add_tagged(&el, idata->ctx, idata->cur.e, idata->tag);
         const bool c_pgp_auto_decode =
-            cs_subset_bool(NeoMutt->sub, "pgp_auto_decode");
+            cs_subset_bool(idata->sub, "pgp_auto_decode");
         if (c_pgp_auto_decode &&
             (idata->tag || !(idata->cur.e->security & PGP_TRADITIONAL_CHECKED)))
         {
           mutt_check_traditional_pgp(ctx_mailbox(idata->ctx), &el, &menu->redraw);
         }
         mutt_send_message(SEND_REPLY | SEND_LIST_REPLY, NULL, NULL, idata->ctx,
-                          &el, NeoMutt->sub);
+                          &el, idata->sub);
         emaillist_clear(&el);
         menu->redraw = REDRAW_FULL;
         break;
@@ -3672,7 +3682,7 @@ int mutt_index_menu(struct MuttWindow *dlg)
       case OP_MAIL:
         if (!prereq(idata->ctx, menu, CHECK_ATTACH))
           break;
-        mutt_send_message(SEND_NO_FLAGS, NULL, NULL, idata->ctx, NULL, NeoMutt->sub);
+        mutt_send_message(SEND_NO_FLAGS, NULL, NULL, idata->ctx, NULL, idata->sub);
         menu->redraw = REDRAW_FULL;
         break;
 
@@ -3681,7 +3691,7 @@ int mutt_index_menu(struct MuttWindow *dlg)
           break;
         if (!prereq(idata->ctx, menu, CHECK_ATTACH))
           break;
-        mutt_send_message(SEND_KEY, NULL, NULL, NULL, NULL, NeoMutt->sub);
+        mutt_send_message(SEND_KEY, NULL, NULL, NULL, NULL, idata->sub);
         menu->redraw = REDRAW_FULL;
         break;
 
@@ -3735,7 +3745,7 @@ int mutt_index_menu(struct MuttWindow *dlg)
 #ifdef USE_IMAP
         /* in an IMAP folder index with imap_peek=no, piping could change
          * new or old messages status to read. Redraw what's needed.  */
-        const bool c_imap_peek = cs_subset_bool(NeoMutt->sub, "imap_peek");
+        const bool c_imap_peek = cs_subset_bool(idata->sub, "imap_peek");
         if ((idata->ctx->mailbox->type == MUTT_IMAP) && !c_imap_peek)
         {
           menu->redraw |= (idata->tag ? REDRAW_INDEX : REDRAW_CURRENT) | REDRAW_STATUS;
@@ -3756,7 +3766,7 @@ int mutt_index_menu(struct MuttWindow *dlg)
 #ifdef USE_IMAP
         /* in an IMAP folder index with imap_peek=no, printing could change
          * new or old messages status to read. Redraw what's needed.  */
-        const bool c_imap_peek = cs_subset_bool(NeoMutt->sub, "imap_peek");
+        const bool c_imap_peek = cs_subset_bool(idata->sub, "imap_peek");
         if ((idata->ctx->mailbox->type == MUTT_IMAP) && !c_imap_peek)
         {
           menu->redraw |= (idata->tag ? REDRAW_INDEX : REDRAW_CURRENT) | REDRAW_STATUS;
@@ -3781,7 +3791,7 @@ int mutt_index_menu(struct MuttWindow *dlg)
                                       MUTT_READ, true, (op != OP_MAIN_READ_THREAD));
         if (rc != -1)
         {
-          const bool c_resolve = cs_subset_bool(NeoMutt->sub, "resolve");
+          const bool c_resolve = cs_subset_bool(idata->sub, "resolve");
           if (c_resolve)
           {
             menu->current =
@@ -3822,7 +3832,7 @@ int mutt_index_menu(struct MuttWindow *dlg)
           {
             char str[256], macro[256];
             const char *const c_mark_macro_prefix =
-                cs_subset_string(NeoMutt->sub, "mark_macro_prefix");
+                cs_subset_string(idata->sub, "mark_macro_prefix");
             snprintf(str, sizeof(str), "%s%s", c_mark_macro_prefix, buf2);
             snprintf(macro, sizeof(macro), "<search>~i \"%s\"\n",
                      idata->cur.e->env->message_id);
@@ -3850,7 +3860,7 @@ int mutt_index_menu(struct MuttWindow *dlg)
       case OP_RECALL_MESSAGE:
         if (!prereq(idata->ctx, menu, CHECK_ATTACH))
           break;
-        mutt_send_message(SEND_POSTPONED, NULL, NULL, idata->ctx, NULL, NeoMutt->sub);
+        mutt_send_message(SEND_POSTPONED, NULL, NULL, idata->ctx, NULL, idata->sub);
         menu->redraw = REDRAW_FULL;
         break;
 
@@ -3867,12 +3877,12 @@ int mutt_index_menu(struct MuttWindow *dlg)
             if (!e)
               break;
             if (message_is_tagged(e))
-              mutt_resend_message(NULL, idata->ctx, e, NeoMutt->sub);
+              mutt_resend_message(NULL, idata->ctx, e, idata->sub);
           }
         }
         else
         {
-          mutt_resend_message(NULL, idata->ctx, idata->cur.e, NeoMutt->sub);
+          mutt_resend_message(NULL, idata->ctx, idata->cur.e, idata->sub);
         }
 
         menu->redraw = REDRAW_FULL;
@@ -3892,21 +3902,21 @@ int mutt_index_menu(struct MuttWindow *dlg)
         if (!idata->cur.e)
           break;
         const enum QuadOption c_followup_to_poster =
-            cs_subset_quad(NeoMutt->sub, "followup_to_poster");
+            cs_subset_quad(idata->sub, "followup_to_poster");
         if ((op != OP_FOLLOWUP) || !idata->cur.e->env->followup_to ||
             !mutt_istr_equal(idata->cur.e->env->followup_to, "poster") ||
             (query_quadoption(c_followup_to_poster,
                               _("Reply by mail as poster prefers?")) != MUTT_YES))
         {
           const enum QuadOption c_post_moderated =
-              cs_subset_quad(NeoMutt->sub, "post_moderated");
+              cs_subset_quad(idata->sub, "post_moderated");
           if (idata->ctx && (idata->ctx->mailbox->type == MUTT_NNTP) &&
               !((struct NntpMboxData *) idata->ctx->mailbox->mdata)->allowed && (query_quadoption(c_post_moderated, _("Posting to this group not allowed, may be moderated. Continue?")) != MUTT_YES))
           {
             break;
           }
           if (op == OP_POST)
-            mutt_send_message(SEND_NEWS, NULL, NULL, idata->ctx, NULL, NeoMutt->sub);
+            mutt_send_message(SEND_NEWS, NULL, NULL, idata->ctx, NULL, idata->sub);
           else
           {
             if (!prereq(idata->ctx, menu, CHECK_IN_MAILBOX | CHECK_MSGCOUNT))
@@ -3914,7 +3924,7 @@ int mutt_index_menu(struct MuttWindow *dlg)
             struct EmailList el = STAILQ_HEAD_INITIALIZER(el);
             el_add_tagged(&el, idata->ctx, idata->cur.e, idata->tag);
             mutt_send_message(((op == OP_FOLLOWUP) ? SEND_REPLY : SEND_FORWARD) | SEND_NEWS,
-                              NULL, NULL, idata->ctx, &el, NeoMutt->sub);
+                              NULL, NULL, idata->ctx, &el, idata->sub);
             emaillist_clear(&el);
           }
           menu->redraw = REDRAW_FULL;
@@ -3932,13 +3942,13 @@ int mutt_index_menu(struct MuttWindow *dlg)
         struct EmailList el = STAILQ_HEAD_INITIALIZER(el);
         el_add_tagged(&el, idata->ctx, idata->cur.e, idata->tag);
         const bool c_pgp_auto_decode =
-            cs_subset_bool(NeoMutt->sub, "pgp_auto_decode");
+            cs_subset_bool(idata->sub, "pgp_auto_decode");
         if (c_pgp_auto_decode &&
             (idata->tag || !(idata->cur.e->security & PGP_TRADITIONAL_CHECKED)))
         {
           mutt_check_traditional_pgp(ctx_mailbox(idata->ctx), &el, &menu->redraw);
         }
-        mutt_send_message(SEND_REPLY, NULL, NULL, idata->ctx, &el, NeoMutt->sub);
+        mutt_send_message(SEND_REPLY, NULL, NULL, idata->ctx, &el, idata->sub);
         emaillist_clear(&el);
         menu->redraw = REDRAW_FULL;
         break;
@@ -3963,7 +3973,7 @@ int mutt_index_menu(struct MuttWindow *dlg)
                                       !idata->cur.e->tagged, (op != OP_TAG_THREAD));
         if (rc != -1)
         {
-          const bool c_resolve = cs_subset_bool(NeoMutt->sub, "resolve");
+          const bool c_resolve = cs_subset_bool(idata->sub, "resolve");
           if (c_resolve)
           {
             if (op == OP_TAG_THREAD)
@@ -4000,7 +4010,7 @@ int mutt_index_menu(struct MuttWindow *dlg)
         }
         else
         {
-          const bool c_resolve = cs_subset_bool(NeoMutt->sub, "resolve");
+          const bool c_resolve = cs_subset_bool(idata->sub, "resolve");
           if (c_resolve && (menu->current < (idata->ctx->mailbox->vcount - 1)))
           {
             menu->current++;
@@ -4035,7 +4045,7 @@ int mutt_index_menu(struct MuttWindow *dlg)
         }
         if (rc != -1)
         {
-          const bool c_resolve = cs_subset_bool(NeoMutt->sub, "resolve");
+          const bool c_resolve = cs_subset_bool(idata->sub, "resolve");
           if (c_resolve)
           {
             if (op == OP_UNDELETE_THREAD)
@@ -4095,7 +4105,7 @@ int mutt_index_menu(struct MuttWindow *dlg)
       }
 
       case OP_SIDEBAR_TOGGLE_VISIBLE:
-        bool_str_toggle(NeoMutt->sub, "sidebar_visible", NULL);
+        bool_str_toggle(idata->sub, "sidebar_visible", NULL);
         mutt_window_reflow(NULL);
         break;
 #endif
@@ -4241,7 +4251,7 @@ struct MuttWindow *index_pager_init(struct ConfigSubset *sub, struct Context *ct
       mutt_window_new(WT_DLG_INDEX, MUTT_WIN_ORIENT_HORIZONTAL, MUTT_WIN_SIZE_MAXIMISE,
                       MUTT_WIN_SIZE_UNLIMITED, MUTT_WIN_SIZE_UNLIMITED);
 
-  const bool c_status_on_top = cs_subset_bool(NeoMutt->sub, "status_on_top");
+  const bool c_status_on_top = cs_subset_bool(sub, "status_on_top");
   mutt_window_add_child(dlg, create_panel_index(dlg, c_status_on_top));
   mutt_window_add_child(dlg, create_panel_pager(dlg, c_status_on_top));
 

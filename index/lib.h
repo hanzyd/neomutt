@@ -59,7 +59,7 @@ void index_make_entry(struct Menu *menu, char *buf, size_t buflen, int line);
 void mutt_draw_statusline(int cols, const char *buf, size_t buflen);
 int  mutt_index_menu(struct MuttWindow *dlg);
 void mutt_set_header_color(struct Mailbox *m, struct Email *e);
-void mutt_update_index(struct Menu *menu, struct Context *ctx, int check, int oldcount, const struct Email *curr_email);
+void mutt_update_index(struct ConfigSubset *sub, struct Menu *menu, struct Context *ctx, int check, int oldcount, const struct Email *curr_email);
 struct MuttWindow *index_pager_init(struct ConfigSubset *sub, struct Context *ctx);
 void index_pager_shutdown(struct MuttWindow *dlg);
 
