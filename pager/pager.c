@@ -2151,6 +2151,9 @@ static void pager_custom_redraw(struct Menu *pager_menu)
         rd->menu->current = rd->extra->email->vnum;
         rd->menu->win_index = rd->extra->win_index;
         rd->menu->win_ibar = rd->extra->win_ibar;
+
+        struct MuttWindow *dlg = dialog_find(rd->extra->win_pager);
+        rd->menu->mdata = dlg->wdata;
       }
 
       mutt_curses_set_color(MT_COLOR_NORMAL);

@@ -34,16 +34,18 @@
 #include "core/lib.h"
 #include "gui/lib.h"
 #include "context.h"
+#include "index_data.h"
 #include "mutt_globals.h"
 #include "options.h"
 
 /**
  * config_pager_index_lines - React to changes to $pager_index_lines
- * @param dlg Index Dialog
+ * @param dlg   Index Dialog
+ * @param idata Index shared data
  * @retval  0 Successfully handled
  * @retval -1 Error
  */
-static int config_pager_index_lines(struct MuttWindow *dlg)
+static int config_pager_index_lines(struct MuttWindow *dlg, struct IndexData *idata)
 {
   struct MuttWindow *win_index = mutt_window_find(dlg, WT_INDEX);
   struct MuttWindow *win_pager = mutt_window_find(dlg, WT_PAGER);
@@ -53,9 +55,11 @@ static int config_pager_index_lines(struct MuttWindow *dlg)
   struct MuttWindow *parent = win_pager->parent;
   if (parent->state.visible)
   {
+    struct Mailbox *m = ctx_mailbox(idata->ctx);
+
     const short c_pager_index_lines =
-        cs_subset_number(NeoMutt->sub, "pager_index_lines");
-    int vcount = ctx_mailbox(Contex2) ? Contex2->mailbox->vcount : 0;
+        cs_subset_number(idata->sub, "pager_index_lines");
+    int vcount = m ? m->vcount : 0;
     win_index->req_rows = MIN(c_pager_index_lines, vcount);
     win_index->size = MUTT_WIN_SIZE_FIXED;
 
@@ -77,13 +81,14 @@ static int config_pager_index_lines(struct MuttWindow *dlg)
 
 /**
  * config_reply_regex - React to changes to $reply_regex
- * @param dlg Index Dialog
+ * @param dlg   Index Dialog
+ * @param idata Index shared data
  * @retval  0 Successfully handled
  * @retval -1 Error
  */
-static int config_reply_regex(struct MuttWindow *dlg)
+static int config_reply_regex(struct MuttWindow *dlg, struct IndexData *idata)
 {
-  struct Mailbox *m = ctx_mailbox(Contex2);
+  struct Mailbox *m = ctx_mailbox(idata->ctx);
   if (!m)
     return 0;
 
@@ -99,7 +104,7 @@ static int config_reply_regex(struct MuttWindow *dlg)
       continue;
 
     const struct Regex *c_reply_regex =
-        cs_subset_regex(NeoMutt->sub, "reply_regex");
+        cs_subset_regex(idata->sub, "reply_regex");
     if (mutt_regex_capture(c_reply_regex, env->subject, 1, pmatch))
     {
       env->real_subj = env->subject + pmatch[0].rm_eo;
@@ -115,11 +120,12 @@ static int config_reply_regex(struct MuttWindow *dlg)
 
 /**
  * config_status_on_top - React to changes to $status_on_top
- * @param dlg Index Dialog
+ * @param dlg   Index Dialog
+ * @param idata Index shared data
  * @retval  0 Successfully handled
  * @retval -1 Error
  */
-static int config_status_on_top(struct MuttWindow *dlg)
+static int config_status_on_top(struct MuttWindow *dlg, struct IndexData *idata)
 {
   struct MuttWindow *win_index = mutt_window_find(dlg, WT_INDEX);
   struct MuttWindow *win_pager = mutt_window_find(dlg, WT_PAGER);
@@ -133,7 +139,7 @@ static int config_status_on_top(struct MuttWindow *dlg)
   if (!first)
     return -1;
 
-  const bool c_status_on_top = cs_subset_bool(NeoMutt->sub, "status_on_top");
+  const bool c_status_on_top = cs_subset_bool(idata->sub, "status_on_top");
   if ((c_status_on_top && (first == win_index)) || (!c_status_on_top && (first != win_index)))
   {
     // Swap the Index and the Index Bar Windows
@@ -168,14 +174,18 @@ static int index_config_observer(struct NotifyCallback *nc)
   struct EventConfig *ec = nc->event_data;
   struct MuttWindow *dlg = nc->global_data;
 
+  struct IndexData *idata = dlg->wdata;
+  if (!idata)
+    return -1;
+
   if (mutt_str_equal(ec->name, "pager_index_lines"))
-    return config_pager_index_lines(dlg);
+    return config_pager_index_lines(dlg, idata);
 
   if (mutt_str_equal(ec->name, "reply_regex"))
-    return config_reply_regex(dlg);
+    return config_reply_regex(dlg, idata);
 
   if (mutt_str_equal(ec->name, "status_on_top"))
-    return config_status_on_top(dlg);
+    return config_status_on_top(dlg, idata);
 
   return 0;
 }
