@@ -1180,11 +1180,6 @@ int mutt_index_menu(struct MuttWindow *dlg)
   idata->attach_msg = OptAttachMsg;
   idata->in_pager = false;
 
-  struct MuttWindow *win_index = mutt_window_find(dlg, WT_INDEX);
-  struct MuttWindow *win_ibar = mutt_window_find(dlg, WT_INDEX_BAR);
-  // struct MuttWindow *win_pager = mutt_window_find(dlg, WT_PAGER);
-  // struct MuttWindow *win_pbar = mutt_window_find(dlg, WT_PAGER_BAR);
-
 #ifdef USE_NNTP
   if (ctx_mailbox(idata->ctx) && (idata->ctx->mailbox->type == MUTT_NNTP))
     dlg->help_data = IndexNewsHelp;
@@ -1194,9 +1189,9 @@ int mutt_index_menu(struct MuttWindow *dlg)
   dlg->help_menu = MENU_MAIN;
 
   struct Menu *menu = mutt_menu_new(MENU_MAIN);
-  menu->pagelen = win_index->state.rows;
-  menu->win_index = win_index;
-  menu->win_ibar = win_ibar;
+  menu->pagelen = idata->win_index->state.rows;
+  menu->win_index = idata->win_index;
+  menu->win_ibar = idata->win_ibar;
 
   menu->make_entry = index_make_entry;
   menu->color = index_color;
@@ -1649,15 +1644,23 @@ struct MuttWindow *index_pager_init(struct ConfigSubset *sub, struct Context *ct
       mutt_window_new(WT_DLG_INDEX, MUTT_WIN_ORIENT_HORIZONTAL, MUTT_WIN_SIZE_MAXIMISE,
                       MUTT_WIN_SIZE_UNLIMITED, MUTT_WIN_SIZE_UNLIMITED);
 
-  const bool c_status_on_top = cs_subset_bool(sub, "status_on_top");
-  mutt_window_add_child(dlg, create_panel_index(dlg, c_status_on_top));
-  mutt_window_add_child(dlg, create_panel_pager(dlg, c_status_on_top));
-
   struct IndexData *idata = index_data_new();
   idata->sub = sub;
   idata->ctx = ctx;
   idata->mailbox = ctx_mailbox(ctx);
   idata->account = idata->mailbox ? idata->mailbox->account : NULL;
+
+  const bool c_status_on_top = cs_subset_bool(sub, "status_on_top");
+
+  struct MuttWindow *cont = create_panel_index(dlg, c_status_on_top);
+  mutt_window_add_child(dlg, cont);
+  idata->win_index = mutt_window_find(cont, WT_INDEX);
+  idata->win_ibar = mutt_window_find(cont, WT_INDEX_BAR);
+
+  cont = create_panel_pager(dlg, c_status_on_top);
+  mutt_window_add_child(dlg, cont);
+  idata->win_pager = mutt_window_find(cont, WT_PAGER);
+  idata->win_pbar = mutt_window_find(cont, WT_PAGER_BAR);
 
   dlg->wdata = idata;
   dlg->wdata_free = index_data_free;

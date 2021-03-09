@@ -75,10 +75,6 @@
 #include "pop/lib.h"
 #endif
 
-struct MuttWindow *win_index = NULL;
-struct MuttWindow *win_ibar = NULL;
-struct MuttWindow *win_pager = NULL;
-struct MuttWindow *win_pbar = NULL;
 struct MuttWindow *dlg = NULL;
 
 // -----------------------------------------------------------------------------
@@ -293,9 +289,9 @@ static enum IndexRetval op_display_message(struct Menu *menu, int op, struct Ind
   }
   set_current_email(&idata->cur, mutt_get_virt_email(idata->mailbox, menu->current));
 
-  op = mutt_display_message(win_index, win_ibar, win_pager, win_pbar,
-                            idata->mailbox, idata->cur.e);
-  window_set_focus(win_index);
+  op = mutt_display_message(idata->win_index, idata->win_ibar, idata->win_pager,
+                            idata->win_pbar, idata->mailbox, idata->cur.e);
+  window_set_focus(idata->win_index);
   if (op < 0)
   {
     OptNeedResort = false;
@@ -411,7 +407,7 @@ static enum IndexRetval op_end_cond(struct Menu *menu, int op, struct IndexData 
 static enum IndexRetval op_enter_command(struct Menu *menu, int op, struct IndexData *idata)
 {
   mutt_enter_command();
-  window_set_focus(win_index);
+  window_set_focus(idata->win_index);
   if (idata->ctx)
     mutt_check_rescore(idata->mailbox);
   menu->redraw = REDRAW_FULL;

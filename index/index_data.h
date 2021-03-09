@@ -53,6 +53,11 @@ struct IndexData
   struct Email *email;      ///< Currently selected Email
   struct Notify *notify;    ///< Notifications handler
 
+  struct MuttWindow *win_index;
+  struct MuttWindow *win_ibar;
+  struct MuttWindow *win_pager;
+  struct MuttWindow *win_pbar;
+
   bool done;
   bool tag;
   int newcount;
