@@ -85,7 +85,7 @@ struct MuttWindow *dlg = NULL;
 static enum IndexRetval op_bounce_message(struct Menu *menu, int op, struct IndexData *idata)
 {
   struct EmailList el = STAILQ_HEAD_INITIALIZER(el);
-  el_add_tagged(&el, idata->ctx, idata->cur.e, idata->tag);
+  get_tagged_emails(idata, &el);
   ci_bounce_message(idata->mailbox, &el);
   emaillist_clear(&el);
 
@@ -108,13 +108,15 @@ static enum IndexRetval op_check_traditional(struct Menu *menu, int op, struct I
 {
   if (!(WithCrypto & APPLICATION_PGP))
     return IR_NOT_IMPL;
-  if (!idata->cur.e)
+
+  struct Email *e = get_current_email(idata);
+  if (!e)
     return IR_NO_ACTION;
 
-  if (idata->tag || !(idata->cur.e->security & PGP_TRADITIONAL_CHECKED))
+  if (idata->tag || !(e->security & PGP_TRADITIONAL_CHECKED))
   {
     struct EmailList el = STAILQ_HEAD_INITIALIZER(el);
-    el_add_tagged(&el, idata->ctx, idata->cur.e, idata->tag);
+    el_add_tagged(&el, idata->ctx, e, idata->tag);
     mutt_check_traditional_pgp(idata->mailbox, &el, &menu->redraw);
     emaillist_clear(&el);
   }
@@ -131,11 +133,11 @@ static enum IndexRetval op_check_traditional(struct Menu *menu, int op, struct I
 static enum IndexRetval op_compose_to_sender(struct Menu *menu, int op, struct IndexData *idata)
 {
   struct EmailList el = STAILQ_HEAD_INITIALIZER(el);
-  el_add_tagged(&el, idata->ctx, idata->cur.e, idata->tag);
+  get_tagged_emails(idata, &el);
   mutt_send_message(SEND_TO_SENDER, NULL, NULL, idata->ctx, &el, idata->sub);
   emaillist_clear(&el);
-  menu->redraw = REDRAW_FULL;
 
+  menu->redraw = REDRAW_FULL;
   return IR_VOID;
 }
 
@@ -144,12 +146,14 @@ static enum IndexRetval op_compose_to_sender(struct Menu *menu, int op, struct I
  */
 static enum IndexRetval op_create_alias(struct Menu *menu, int op, struct IndexData *idata)
 {
-  struct AddressList *al = NULL;
-  if (idata->cur.e && idata->cur.e->env)
-    al = mutt_get_address(idata->cur.e->env, NULL);
-  alias_create(al, idata->sub);
-  menu->redraw |= REDRAW_CURRENT;
+  struct Email *e = get_current_email(idata);
 
+  struct AddressList *al = NULL;
+  if (e && e->env)
+    al = mutt_get_address(e->env, NULL);
+  alias_create(al, idata->sub);
+
+  menu->redraw |= REDRAW_CURRENT;
   return IR_VOID;
 }
 
@@ -163,7 +167,7 @@ static enum IndexRetval op_delete(struct Menu *menu, int op, struct IndexData *i
     return IR_ERROR;
 
   struct EmailList el = STAILQ_HEAD_INITIALIZER(el);
-  el_add_tagged(&el, idata->ctx, idata->cur.e, idata->tag);
+  get_tagged_emails(idata, &el);
 
   mutt_emails_set_flag(idata->mailbox, &el, MUTT_DELETE, true);
   mutt_emails_set_flag(idata->mailbox, &el, MUTT_PURGE, (op == OP_PURGE_MESSAGE));
@@ -213,23 +217,24 @@ static enum IndexRetval op_delete_thread(struct Menu *menu, int op, struct Index
      "messages". Your language might have other means to express this. */
   if (!check_acl(idata->mailbox, MUTT_ACL_DELETE, _("Can't delete messages")))
     return IR_ERROR;
-  if (!idata->cur.e)
+  struct Email *e = get_current_email(idata);
+  if (!e)
     return IR_NO_ACTION;
 
   int subthread = (op == OP_DELETE_SUBTHREAD);
-  int rc = mutt_thread_set_flag(idata->mailbox, idata->cur.e, MUTT_DELETE, true, subthread);
+  int rc = mutt_thread_set_flag(idata->mailbox, e, MUTT_DELETE, true, subthread);
   if (rc == -1)
     return IR_ERROR;
   if (op == OP_PURGE_THREAD)
   {
-    rc = mutt_thread_set_flag(idata->mailbox, idata->cur.e, MUTT_PURGE, true, subthread);
+    rc = mutt_thread_set_flag(idata->mailbox, e, MUTT_PURGE, true, subthread);
     if (rc == -1)
       return IR_ERROR;
   }
 
   const bool c_delete_untag = cs_subset_bool(idata->sub, "delete_untag");
   if (c_delete_untag)
-    mutt_thread_set_flag(idata->mailbox, idata->cur.e, MUTT_TAG, false, subthread);
+    mutt_thread_set_flag(idata->mailbox, e, MUTT_TAG, false, subthread);
   const bool c_resolve = cs_subset_bool(idata->sub, "resolve");
   if (c_resolve)
   {
@@ -247,9 +252,10 @@ static enum IndexRetval op_delete_thread(struct Menu *menu, int op, struct Index
  */
 static enum IndexRetval op_display_address(struct Menu *menu, int op, struct IndexData *idata)
 {
-  if (!idata->cur.e)
+  struct Email *e = get_current_email(idata);
+  if (!e)
     return IR_NO_ACTION;
-  mutt_display_address(idata->cur.e->env);
+  mutt_display_address(e->env);
 
   return IR_VOID;
 }
@@ -259,8 +265,10 @@ static enum IndexRetval op_display_address(struct Menu *menu, int op, struct Ind
  */
 static enum IndexRetval op_display_message(struct Menu *menu, int op, struct IndexData *idata)
 {
-  if (!idata->cur.e)
+  struct Email *e = get_current_email(idata);
+  if (!e)
     return IR_NO_ACTION;
+
   /* toggle the weeding of headers so that a user can press the key
    * again while reading the message.  */
   if (op == OP_DISPLAY_HEADERS)
@@ -269,28 +277,29 @@ static enum IndexRetval op_display_message(struct Menu *menu, int op, struct Ind
   OptNeedResort = false;
 
   const short c_sort = cs_subset_sort(idata->sub, "sort");
-  if (((c_sort & SORT_MASK) == SORT_THREADS) && idata->cur.e->collapsed)
+  if (((c_sort & SORT_MASK) == SORT_THREADS) && e->collapsed)
   {
-    mutt_uncollapse_thread(idata->cur.e);
+    mutt_uncollapse_thread(e);
     mutt_set_vnum(idata->mailbox);
     const bool c_uncollapse_jump =
         cs_subset_bool(idata->sub, "uncollapse_jump");
     if (c_uncollapse_jump)
-      menu->current = mutt_thread_next_unread(idata->cur.e);
+      menu->current = mutt_thread_next_unread(e);
   }
 
   const bool c_pgp_auto_decode = cs_subset_bool(idata->sub, "pgp_auto_decode");
-  if (c_pgp_auto_decode && (idata->tag || !(idata->cur.e->security & PGP_TRADITIONAL_CHECKED)))
+  if (c_pgp_auto_decode && (idata->tag || !(e->security & PGP_TRADITIONAL_CHECKED)))
   {
     struct EmailList el = STAILQ_HEAD_INITIALIZER(el);
-    el_add_tagged(&el, idata->ctx, idata->cur.e, idata->tag);
+    el_add_tagged(&el, idata->ctx, e, idata->tag);
     mutt_check_traditional_pgp(idata->mailbox, &el, &menu->redraw);
     emaillist_clear(&el);
   }
-  set_current_email(idata, mutt_get_virt_email(idata->mailbox, menu->current));
+  e = mutt_get_virt_email(idata->mailbox, menu->current);
+  set_current_email(idata, e);
 
   op = mutt_display_message(idata->win_index, idata->win_ibar, idata->win_pager,
-                            idata->win_pbar, idata->mailbox, idata->cur.e);
+                            idata->win_pbar, idata->mailbox, e);
   window_set_focus(idata->win_index);
   if (op < 0)
   {
@@ -318,7 +327,7 @@ static enum IndexRetval op_display_message(struct Menu *menu, int op, struct Ind
 static enum IndexRetval op_edit_label(struct Menu *menu, int op, struct IndexData *idata)
 {
   struct EmailList el = STAILQ_HEAD_INITIALIZER(el);
-  el_add_tagged(&el, idata->ctx, idata->cur.e, idata->tag);
+  get_tagged_emails(idata, &el);
   int num_changed = mutt_label_message(idata->mailbox, &el);
   emaillist_clear(&el);
 
@@ -358,18 +367,19 @@ static enum IndexRetval op_edit_raw_message(struct Menu *menu, int op, struct In
   else
     edit = false;
 
-  if (!idata->cur.e)
+  struct Email *e = get_current_email(idata);
+  if (!e)
     return IR_NO_ACTION;
   const bool c_pgp_auto_decode = cs_subset_bool(idata->sub, "pgp_auto_decode");
-  if (c_pgp_auto_decode && (idata->tag || !(idata->cur.e->security & PGP_TRADITIONAL_CHECKED)))
+  if (c_pgp_auto_decode && (idata->tag || !(e->security & PGP_TRADITIONAL_CHECKED)))
   {
     struct EmailList el = STAILQ_HEAD_INITIALIZER(el);
-    el_add_tagged(&el, idata->ctx, idata->cur.e, idata->tag);
+    el_add_tagged(&el, idata->ctx, e, idata->tag);
     mutt_check_traditional_pgp(idata->mailbox, &el, &menu->redraw);
     emaillist_clear(&el);
   }
   struct EmailList el = STAILQ_HEAD_INITIALIZER(el);
-  el_add_tagged(&el, idata->ctx, idata->cur.e, idata->tag);
+  el_add_tagged(&el, idata->ctx, e, idata->tag);
   mutt_ev_message(idata->mailbox, &el, edit ? EVM_EDIT : EVM_VIEW);
   emaillist_clear(&el);
   menu->redraw = REDRAW_FULL;
@@ -382,9 +392,10 @@ static enum IndexRetval op_edit_raw_message(struct Menu *menu, int op, struct In
  */
 static enum IndexRetval op_edit_type(struct Menu *menu, int op, struct IndexData *idata)
 {
-  if (!idata->cur.e)
+  struct Email *e = get_current_email(idata);
+  if (!e)
     return IR_NO_ACTION;
-  mutt_edit_content_type(idata->cur.e, idata->cur.e->body, NULL);
+  mutt_edit_content_type(e, e->body, NULL);
   /* if we were in the pager, redisplay the message */
   if (idata->in_pager)
     return IR_CONTINUE;
@@ -448,8 +459,9 @@ static enum IndexRetval op_extract_keys(struct Menu *menu, int op, struct IndexD
 {
   if (!WithCrypto)
     return IR_NOT_IMPL;
+
   struct EmailList el = STAILQ_HEAD_INITIALIZER(el);
-  el_add_tagged(&el, idata->ctx, idata->cur.e, idata->tag);
+  get_tagged_emails(idata, &el);
   crypt_extract_keys_from_messages(idata->mailbox, &el);
   emaillist_clear(&el);
   menu->redraw = REDRAW_FULL;
@@ -462,33 +474,30 @@ static enum IndexRetval op_extract_keys(struct Menu *menu, int op, struct IndexD
  */
 static enum IndexRetval op_flag_message(struct Menu *menu, int op, struct IndexData *idata)
 {
+  struct Mailbox *m = idata->mailbox;
+
   /* L10N: CHECK_ACL */
-  if (!check_acl(idata->mailbox, MUTT_ACL_WRITE, _("Can't flag message")))
+  if (!check_acl(m, MUTT_ACL_WRITE, _("Can't flag message")))
     return IR_ERROR;
 
-  struct Mailbox *m = idata->mailbox;
-  if (idata->tag)
-  {
-    for (size_t i = 0; i < m->msg_count; i++)
-    {
-      struct Email *e = m->emails[i];
-      if (!e)
-        break;
-      if (message_is_tagged(e))
-        mutt_set_flag(m, e, MUTT_FLAG, !e->flagged);
-    }
+  struct EmailList el = STAILQ_HEAD_INITIALIZER(el);
+  int count = get_tagged_emails(idata, &el);
+  if (count < 1)
+    return IR_NO_ACTION;
 
-    menu->redraw |= REDRAW_INDEX;
-  }
-  else
+  struct EmailNode *en = NULL;
+  STAILQ_FOREACH(en, &el, entries)
   {
-    if (!idata->cur.e)
-      return IR_NO_ACTION;
-    mutt_set_flag(m, idata->cur.e, MUTT_FLAG, !idata->cur.e->flagged);
+    struct Email *e = en->email;
+    mutt_set_flag(m, e, MUTT_FLAG, !e->flagged);
+  }
+
+  if (count == 1)
+  {
     const bool c_resolve = cs_subset_bool(idata->sub, "resolve");
     if (c_resolve)
     {
-      menu->current = ci_next_undeleted(idata->mailbox, menu->current);
+      menu->current = ci_next_undeleted(m, menu->current);
       if (menu->current == -1)
       {
         menu->current = menu->oldcurrent;
@@ -500,8 +509,13 @@ static enum IndexRetval op_flag_message(struct Menu *menu, int op, struct IndexD
     else
       menu->redraw |= REDRAW_CURRENT;
   }
+  else
+  {
+    menu->redraw |= REDRAW_INDEX;
+  }
   menu->redraw |= REDRAW_STATUS;
 
+  emaillist_clear(&el);
   return IR_VOID;
 }
 
@@ -519,12 +533,16 @@ static enum IndexRetval op_forget_passphrase(struct Menu *menu, int op, struct I
  */
 static enum IndexRetval op_forward_message(struct Menu *menu, int op, struct IndexData *idata)
 {
-  if (!idata->cur.e)
+  struct Email *e = get_current_email(idata);
+  if (!e)
     return IR_NO_ACTION;
+
   struct EmailList el = STAILQ_HEAD_INITIALIZER(el);
-  el_add_tagged(&el, idata->ctx, idata->cur.e, idata->tag);
+  if (get_tagged_emails(idata, &el) < 1)
+    return IR_NO_ACTION;
+
   const bool c_pgp_auto_decode = cs_subset_bool(idata->sub, "pgp_auto_decode");
-  if (c_pgp_auto_decode && (idata->tag || !(idata->cur.e->security & PGP_TRADITIONAL_CHECKED)))
+  if (c_pgp_auto_decode && (idata->tag || !(e->security & PGP_TRADITIONAL_CHECKED)))
   {
     mutt_check_traditional_pgp(idata->mailbox, &el, &menu->redraw);
   }
@@ -540,24 +558,29 @@ static enum IndexRetval op_forward_message(struct Menu *menu, int op, struct Ind
  */
 static enum IndexRetval op_group_reply(struct Menu *menu, int op, struct IndexData *idata)
 {
+  struct Email *e = get_current_email(idata);
+  if (!e)
+    return IR_NO_ACTION;
+
+  struct EmailList el = STAILQ_HEAD_INITIALIZER(el);
+  if (get_tagged_emails(idata, &el) < 1)
+    return IR_NO_ACTION;
+
   SendFlags replyflags = SEND_REPLY;
   if (op == OP_GROUP_REPLY)
     replyflags |= SEND_GROUP_REPLY;
   else
     replyflags |= SEND_GROUP_CHAT_REPLY;
-  if (!idata->cur.e)
-    return IR_NO_ACTION;
-  struct EmailList el = STAILQ_HEAD_INITIALIZER(el);
-  el_add_tagged(&el, idata->ctx, idata->cur.e, idata->tag);
+
   const bool c_pgp_auto_decode = cs_subset_bool(idata->sub, "pgp_auto_decode");
-  if (c_pgp_auto_decode && (idata->tag || !(idata->cur.e->security & PGP_TRADITIONAL_CHECKED)))
+  if (c_pgp_auto_decode && (idata->tag || !(e->security & PGP_TRADITIONAL_CHECKED)))
   {
     mutt_check_traditional_pgp(idata->mailbox, &el, &menu->redraw);
   }
   mutt_send_message(replyflags, NULL, NULL, idata->ctx, &el, idata->sub);
   emaillist_clear(&el);
-  menu->redraw = REDRAW_FULL;
 
+  menu->redraw = REDRAW_FULL;
   return IR_VOID;
 }
 
@@ -617,20 +640,23 @@ static enum IndexRetval op_jump(struct Menu *menu, int op, struct IndexData *ida
  */
 static enum IndexRetval op_list_reply(struct Menu *menu, int op, struct IndexData *idata)
 {
-  if (!idata->cur.e)
+  struct Email *e = get_current_email(idata);
+  if (!e)
     return IR_NO_ACTION;
+
   struct EmailList el = STAILQ_HEAD_INITIALIZER(el);
-  el_add_tagged(&el, idata->ctx, idata->cur.e, idata->tag);
+  get_tagged_emails(idata, &el);
+
   const bool c_pgp_auto_decode = cs_subset_bool(idata->sub, "pgp_auto_decode");
-  if (c_pgp_auto_decode && (idata->tag || !(idata->cur.e->security & PGP_TRADITIONAL_CHECKED)))
+  if (c_pgp_auto_decode && (idata->tag || !(e->security & PGP_TRADITIONAL_CHECKED)))
   {
     mutt_check_traditional_pgp(idata->mailbox, &el, &menu->redraw);
   }
   mutt_send_message(SEND_REPLY | SEND_LIST_REPLY, NULL, NULL, idata->ctx, &el,
                     idata->sub);
   emaillist_clear(&el);
-  menu->redraw = REDRAW_FULL;
 
+  menu->redraw = REDRAW_FULL;
   return IR_VOID;
 }
 
@@ -674,20 +700,18 @@ static enum IndexRetval op_main_break_thread(struct Menu *menu, int op, struct I
   /* L10N: CHECK_ACL */
   if (!check_acl(idata->mailbox, MUTT_ACL_WRITE, _("Can't break thread")))
     return IR_ERROR;
-  if (!idata->cur.e)
+  struct Email *e = get_current_email(idata);
+  if (!e)
     return IR_NO_ACTION;
 
   const short c_sort = cs_subset_sort(idata->sub, "sort");
   if ((c_sort & SORT_MASK) != SORT_THREADS)
     mutt_error(_("Threading is not enabled"));
-  else if (!STAILQ_EMPTY(&idata->cur.e->env->in_reply_to) ||
-           !STAILQ_EMPTY(&idata->cur.e->env->references))
+  else if (!STAILQ_EMPTY(&e->env->in_reply_to) || !STAILQ_EMPTY(&e->env->references))
   {
-    {
-      mutt_break_thread(idata->cur.e);
-      mutt_sort_headers(idata->mailbox, idata->ctx->threads, true, &idata->ctx->vsize);
-      menu->current = idata->cur.e->vnum;
-    }
+    mutt_break_thread(e);
+    mutt_sort_headers(idata->mailbox, idata->ctx->threads, true, &idata->ctx->vsize);
+    menu->current = e->vnum;
 
     idata->mailbox->changed = true;
     mutt_message(_("Thread broken"));
@@ -804,21 +828,22 @@ static enum IndexRetval op_main_collapse_thread(struct Menu *menu, int op,
     return IR_ERROR;
   }
 
-  if (!idata->cur.e)
+  struct Email *e = get_current_email(idata);
+  if (!e)
     return IR_NO_ACTION;
 
-  if (idata->cur.e->collapsed)
+  if (e->collapsed)
   {
-    menu->current = mutt_uncollapse_thread(idata->cur.e);
+    menu->current = mutt_uncollapse_thread(e);
     mutt_set_vnum(idata->mailbox);
     const bool c_uncollapse_jump =
         cs_subset_bool(idata->sub, "uncollapse_jump");
     if (c_uncollapse_jump)
-      menu->current = mutt_thread_next_unread(idata->cur.e);
+      menu->current = mutt_thread_next_unread(e);
   }
-  else if (mutt_thread_can_collapse(idata->cur.e))
+  else if (mutt_thread_can_collapse(e))
   {
-    menu->current = mutt_collapse_thread(idata->cur.e);
+    menu->current = mutt_collapse_thread(e);
     mutt_set_vnum(idata->mailbox);
   }
   else
@@ -926,23 +951,24 @@ static enum IndexRetval op_main_link_threads(struct Menu *menu, int op, struct I
   /* L10N: CHECK_ACL */
   if (!check_acl(idata->mailbox, MUTT_ACL_WRITE, _("Can't link threads")))
     return IR_ERROR;
-  if (!idata->cur.e)
+  struct Email *e = get_current_email(idata);
+  if (!e)
     return IR_NO_ACTION;
 
   const short c_sort = cs_subset_sort(idata->sub, "sort");
   if ((c_sort & SORT_MASK) != SORT_THREADS)
     mutt_error(_("Threading is not enabled"));
-  else if (!idata->cur.e->env->message_id)
+  else if (!e->env->message_id)
     mutt_error(_("No Message-ID: header available to link thread"));
   else
   {
     struct EmailList el = STAILQ_HEAD_INITIALIZER(el);
-    el_add_tagged(&el, idata->ctx, NULL, true);
+    get_tagged_emails(idata, &el);
 
-    if (mutt_link_threads(idata->cur.e, &el, idata->mailbox))
+    if (mutt_link_threads(e, &el, idata->mailbox))
     {
       mutt_sort_headers(idata->mailbox, idata->ctx->threads, true, &idata->ctx->vsize);
-      menu->current = idata->cur.e->vnum;
+      menu->current = e->vnum;
 
       idata->mailbox->changed = true;
       mutt_message(_("Threads linked"));
@@ -965,19 +991,22 @@ static enum IndexRetval op_main_link_threads(struct Menu *menu, int op, struct I
  */
 static enum IndexRetval op_main_modify_tags(struct Menu *menu, int op, struct IndexData *idata)
 {
-  if (!idata->mailbox)
-    return IR_ERROR;
+  struct Email *e = get_current_email(idata);
+  if (!e)
+    return IR_NO_ACTION;
+
   struct Mailbox *m = idata->mailbox;
+  if (!m)
+    return IR_ERROR;
   if (!mx_tags_is_supported(m))
   {
     mutt_message(_("Folder doesn't support tagging, aborting"));
     return IR_ERROR;
   }
-  if (!idata->cur.e)
-    return IR_NO_ACTION;
+
   char *tags = NULL;
   if (!idata->tag)
-    tags = driver_tags_get_with_hidden(&idata->cur.e->tags);
+    tags = driver_tags_get_with_hidden(&e->tags);
   char buf[PATH_MAX] = { 0 };
   int rc = mx_tags_edit(m, tags, buf, sizeof(buf));
   FREE(&tags);
@@ -1004,23 +1033,23 @@ static enum IndexRetval op_main_modify_tags(struct Menu *menu, int op, struct In
 #endif
     for (int px = 0, i = 0; i < m->msg_count; i++)
     {
-      struct Email *e = m->emails[i];
-      if (!e)
+      struct Email *e2 = m->emails[i];
+      if (!e2)
         break;
-      if (!message_is_tagged(e))
+      if (!message_is_tagged(e2))
         continue;
 
       if (m->verbose)
         mutt_progress_update(&progress, ++px, -1);
-      mx_tags_commit(m, e, buf);
+      mx_tags_commit(m, e2, buf);
       if (op == OP_MAIN_MODIFY_TAGS_THEN_HIDE)
       {
         bool still_queried = false;
 #ifdef USE_NOTMUCH
         if (m->type == MUTT_NOTMUCH)
-          still_queried = nm_message_is_still_queried(m, e);
+          still_queried = nm_message_is_still_queried(m, e2);
 #endif
-        e->quasi_deleted = !still_queried;
+        e2->quasi_deleted = !still_queried;
         m->changed = true;
       }
     }
@@ -1032,7 +1061,7 @@ static enum IndexRetval op_main_modify_tags(struct Menu *menu, int op, struct In
   }
   else
   {
-    if (mx_tags_commit(m, idata->cur.e, buf))
+    if (mx_tags_commit(m, e, buf))
     {
       mutt_message(_("Failed to modify tags, aborting"));
       return IR_ERROR;
@@ -1042,9 +1071,9 @@ static enum IndexRetval op_main_modify_tags(struct Menu *menu, int op, struct In
       bool still_queried = false;
 #ifdef USE_NOTMUCH
       if (m->type == MUTT_NOTMUCH)
-        still_queried = nm_message_is_still_queried(m, idata->cur.e);
+        still_queried = nm_message_is_still_queried(m, e);
 #endif
-      idata->cur.e->quasi_deleted = !still_queried;
+      e->quasi_deleted = !still_queried;
       m->changed = true;
     }
     if (idata->in_pager)
@@ -1188,22 +1217,24 @@ static enum IndexRetval op_main_next_new(struct Menu *menu, int op, struct Index
  */
 static enum IndexRetval op_main_next_thread(struct Menu *menu, int op, struct IndexData *idata)
 {
+  struct Email *e = get_current_email(idata);
+
   switch (op)
   {
     case OP_MAIN_NEXT_THREAD:
-      menu->current = mutt_next_thread(idata->cur.e);
+      menu->current = mutt_next_thread(e);
       return IR_ERROR;
 
     case OP_MAIN_NEXT_SUBTHREAD:
-      menu->current = mutt_next_subthread(idata->cur.e);
+      menu->current = mutt_next_subthread(e);
       return IR_ERROR;
 
     case OP_MAIN_PREV_THREAD:
-      menu->current = mutt_previous_thread(idata->cur.e);
+      menu->current = mutt_previous_thread(e);
       return IR_ERROR;
 
     case OP_MAIN_PREV_SUBTHREAD:
-      menu->current = mutt_previous_subthread(idata->cur.e);
+      menu->current = mutt_previous_subthread(e);
       return IR_ERROR;
   }
 
@@ -1310,29 +1341,21 @@ static enum IndexRetval op_main_prev_undeleted(struct Menu *menu, int op,
  */
 static enum IndexRetval op_main_quasi_delete(struct Menu *menu, int op, struct IndexData *idata)
 {
-  if (idata->tag)
-  {
-    struct Mailbox *m = idata->mailbox;
-    for (size_t i = 0; i < m->msg_count; i++)
-    {
-      struct Email *e = m->emails[i];
-      if (!e)
-        break;
-      if (message_is_tagged(e))
-      {
-        e->quasi_deleted = true;
-        m->changed = true;
-      }
-    }
-  }
-  else
-  {
-    if (!idata->cur.e)
-      return IR_NO_ACTION;
-    idata->cur.e->quasi_deleted = true;
-    idata->mailbox->changed = true;
-  }
+  struct EmailList el = STAILQ_HEAD_INITIALIZER(el);
+  if (get_tagged_emails(idata, &el) < 1)
+    return IR_NO_ACTION;
 
+  struct EmailNode *en = NULL;
+  STAILQ_FOREACH(en, &el, entries)
+  {
+    struct Email *e = en->email;
+    e->quasi_deleted = true;
+  }
+  idata->mailbox->changed = true;
+
+  emaillist_clear(&el);
+
+  menu->redraw |= REDRAW_INDEX;
   return IR_VOID;
 }
 
@@ -1348,16 +1371,19 @@ static enum IndexRetval op_main_read_thread(struct Menu *menu, int op, struct In
   if (!check_acl(idata->mailbox, MUTT_ACL_SEEN, _("Can't mark messages as read")))
     return IR_ERROR;
 
-  int rc = mutt_thread_set_flag(idata->mailbox, idata->cur.e, MUTT_READ, true,
+  struct Email *e = get_current_email(idata);
+  if (!e)
+    return IR_NO_ACTION;
+
+  int rc = mutt_thread_set_flag(idata->mailbox, e, MUTT_READ, true,
                                 (op != OP_MAIN_READ_THREAD));
   if (rc != -1)
   {
     const bool c_resolve = cs_subset_bool(idata->sub, "resolve");
     if (c_resolve)
     {
-      menu->current =
-          ((op == OP_MAIN_READ_THREAD) ? mutt_next_thread(idata->cur.e) :
-                                         mutt_next_subthread(idata->cur.e));
+      menu->current = ((op == OP_MAIN_READ_THREAD) ? mutt_next_thread(e) :
+                                                     mutt_next_subthread(e));
       if (menu->current == -1)
       {
         menu->current = menu->oldcurrent;
@@ -1378,7 +1404,11 @@ static enum IndexRetval op_main_read_thread(struct Menu *menu, int op, struct In
  */
 static enum IndexRetval op_main_root_message(struct Menu *menu, int op, struct IndexData *idata)
 {
-  menu->current = mutt_parent_message(idata->cur.e, op == OP_MAIN_ROOT_MESSAGE);
+  struct Email *e = get_current_email(idata);
+  if (!e)
+    return IR_NO_ACTION;
+
+  menu->current = mutt_parent_message(e, op == OP_MAIN_ROOT_MESSAGE);
   if (menu->current < 0)
   {
     menu->current = menu->oldcurrent;
@@ -1400,7 +1430,7 @@ static enum IndexRetval op_main_set_flag(struct Menu *menu, int op, struct Index
 {
   /* check_acl(MUTT_ACL_WRITE); */
   struct EmailList el = STAILQ_HEAD_INITIALIZER(el);
-  el_add_tagged(&el, idata->ctx, idata->cur.e, idata->tag);
+  get_tagged_emails(idata, &el);
 
   if (mutt_change_flag(idata->mailbox, &el, (op == OP_MAIN_SET_FLAG)) == 0)
   {
@@ -1565,9 +1595,11 @@ static enum IndexRetval op_main_untag_pattern(struct Menu *menu, int op, struct 
  */
 static enum IndexRetval op_mark_msg(struct Menu *menu, int op, struct IndexData *idata)
 {
-  if (!idata->cur.e)
+  struct Email *e = get_current_email(idata);
+  if (!e)
     return IR_NO_ACTION;
-  if (idata->cur.e->env->message_id)
+
+  if (e->env->message_id)
   {
     char buf2[128];
 
@@ -1583,7 +1615,7 @@ static enum IndexRetval op_mark_msg(struct Menu *menu, int op, struct IndexData 
       const char *const c_mark_macro_prefix =
           cs_subset_string(idata->sub, "mark_macro_prefix");
       snprintf(str, sizeof(str), "%s%s", c_mark_macro_prefix, buf2);
-      snprintf(macro, sizeof(macro), "<search>~i \"%s\"\n", idata->cur.e->env->message_id);
+      snprintf(macro, sizeof(macro), "<search>~i \"%s\"\n", e->env->message_id);
       /* L10N: "message hotkey" is the key bindings menu description of a
          macro created by <mark-message>. */
       km_bind(str, MENU_MAIN, OP_MACRO, macro, _("message hotkey"));
@@ -1685,7 +1717,7 @@ static enum IndexRetval op_next_entry(struct Menu *menu, int op, struct IndexDat
 static enum IndexRetval op_pipe(struct Menu *menu, int op, struct IndexData *idata)
 {
   struct EmailList el = STAILQ_HEAD_INITIALIZER(el);
-  el_add_tagged(&el, idata->ctx, idata->cur.e, idata->tag);
+  get_tagged_emails(idata, &el);
   mutt_pipe_message(idata->mailbox, &el);
   emaillist_clear(&el);
 
@@ -1727,7 +1759,7 @@ static enum IndexRetval op_prev_entry(struct Menu *menu, int op, struct IndexDat
 static enum IndexRetval op_print(struct Menu *menu, int op, struct IndexData *idata)
 {
   struct EmailList el = STAILQ_HEAD_INITIALIZER(el);
-  el_add_tagged(&el, idata->ctx, idata->cur.e, idata->tag);
+  get_tagged_emails(idata, &el);
   mutt_print_message(idata->mailbox, &el);
   emaillist_clear(&el);
 
@@ -1821,23 +1853,17 @@ static enum IndexRetval op_redraw(struct Menu *menu, int op, struct IndexData *i
  */
 static enum IndexRetval op_resend(struct Menu *menu, int op, struct IndexData *idata)
 {
-  if (idata->tag)
+  struct EmailList el = STAILQ_HEAD_INITIALIZER(el);
+  get_tagged_emails(idata, &el);
+
+  struct EmailNode *en = NULL;
+  STAILQ_FOREACH(en, &el, entries)
   {
-    struct Mailbox *m = idata->mailbox;
-    for (size_t i = 0; i < m->msg_count; i++)
-    {
-      struct Email *e = m->emails[i];
-      if (!e)
-        break;
-      if (message_is_tagged(e))
-        mutt_resend_message(NULL, idata->ctx, e, idata->sub);
-    }
-  }
-  else
-  {
-    mutt_resend_message(NULL, idata->ctx, idata->cur.e, idata->sub);
+    struct Email *e = en->email;
+    mutt_resend_message(NULL, idata->ctx, e, idata->sub);
   }
 
+  emaillist_clear(&el);
   menu->redraw = REDRAW_FULL;
   return IR_VOID;
 }
@@ -1851,7 +1877,7 @@ static enum IndexRetval op_save(struct Menu *menu, int op, struct IndexData *ida
     return IR_NOT_IMPL;
 
   struct EmailList el = STAILQ_HEAD_INITIALIZER(el);
-  el_add_tagged(&el, idata->ctx, idata->cur.e, idata->tag);
+  get_tagged_emails(idata, &el);
 
   const enum MessageSaveOpt save_opt =
       ((op == OP_SAVE) || (op == OP_DECODE_SAVE) || (op == OP_DECRYPT_SAVE)) ? SAVE_MOVE : SAVE_COPY;
@@ -1981,9 +2007,11 @@ static enum IndexRetval op_tag(struct Menu *menu, int op, struct IndexData *idat
   }
   else
   {
-    if (!idata->cur.e)
+    struct Email *e = get_current_email(idata);
+    if (!e)
       return IR_NO_ACTION;
-    mutt_set_flag(idata->mailbox, idata->cur.e, MUTT_TAG, !idata->cur.e->tagged);
+
+    mutt_set_flag(idata->mailbox, e, MUTT_TAG, !e->tagged);
 
     menu->redraw |= REDRAW_STATUS;
     const bool c_resolve = cs_subset_bool(idata->sub, "resolve");
@@ -2004,20 +2032,21 @@ static enum IndexRetval op_tag(struct Menu *menu, int op, struct IndexData *idat
  */
 static enum IndexRetval op_tag_thread(struct Menu *menu, int op, struct IndexData *idata)
 {
-  if (!idata->cur.e)
+  struct Email *e = get_current_email(idata);
+  if (!e)
     return IR_NO_ACTION;
 
-  int rc = mutt_thread_set_flag(idata->mailbox, idata->cur.e, MUTT_TAG,
-                                !idata->cur.e->tagged, (op != OP_TAG_THREAD));
+  int rc = mutt_thread_set_flag(idata->mailbox, e, MUTT_TAG, !e->tagged,
+                                (op != OP_TAG_THREAD));
   if (rc != -1)
   {
     const bool c_resolve = cs_subset_bool(idata->sub, "resolve");
     if (c_resolve)
     {
       if (op == OP_TAG_THREAD)
-        menu->current = mutt_next_thread(idata->cur.e);
+        menu->current = mutt_next_thread(e);
       else
-        menu->current = mutt_next_subthread(idata->cur.e);
+        menu->current = mutt_next_subthread(e);
 
       if (menu->current == -1)
         menu->current = menu->oldcurrent;
@@ -2033,37 +2062,29 @@ static enum IndexRetval op_tag_thread(struct Menu *menu, int op, struct IndexDat
  */
 static enum IndexRetval op_toggle_new(struct Menu *menu, int op, struct IndexData *idata)
 {
+  struct Mailbox *m = idata->mailbox;
+
   /* L10N: CHECK_ACL */
-  if (!check_acl(idata->mailbox, MUTT_ACL_SEEN, _("Can't toggle new")))
+  if (!check_acl(m, MUTT_ACL_SEEN, _("Can't toggle new")))
     return IR_ERROR;
 
-  struct Mailbox *m = idata->mailbox;
-  if (idata->tag)
-  {
-    for (size_t i = 0; i < m->msg_count; i++)
-    {
-      struct Email *e = m->emails[i];
-      if (!e)
-        break;
-      if (!message_is_tagged(e))
-        continue;
+  struct EmailList el = STAILQ_HEAD_INITIALIZER(el);
+  int count = get_tagged_emails(idata, &el);
+  if (count < 1)
+    return IR_NO_ACTION;
 
-      if (e->read || e->old)
-        mutt_set_flag(m, e, MUTT_NEW, true);
-      else
-        mutt_set_flag(m, e, MUTT_READ, true);
-    }
-    menu->redraw |= REDRAW_STATUS | REDRAW_INDEX;
-  }
-  else
+  struct EmailNode *en = NULL;
+  STAILQ_FOREACH(en, &el, entries)
   {
-    if (!idata->cur.e)
-      return IR_NO_ACTION;
-    if (idata->cur.e->read || idata->cur.e->old)
-      mutt_set_flag(m, idata->cur.e, MUTT_NEW, true);
+    struct Email *e = en->email;
+    if (e->read || e->old)
+      mutt_set_flag(m, e, MUTT_NEW, true);
     else
-      mutt_set_flag(m, idata->cur.e, MUTT_READ, true);
+      mutt_set_flag(m, e, MUTT_READ, true);
+  }
 
+  if (count == 1)
+  {
     const bool c_resolve = cs_subset_bool(idata->sub, "resolve");
     if (c_resolve)
     {
@@ -2080,7 +2101,12 @@ static enum IndexRetval op_toggle_new(struct Menu *menu, int op, struct IndexDat
       menu->redraw |= REDRAW_CURRENT;
     menu->redraw |= REDRAW_STATUS;
   }
+  else
+  {
+    menu->redraw |= REDRAW_STATUS | REDRAW_INDEX;
+  }
 
+  emaillist_clear(&el);
   return IR_VOID;
 }
 
@@ -2105,25 +2131,22 @@ static enum IndexRetval op_toggle_write(struct Menu *menu, int op, struct IndexD
  */
 static enum IndexRetval op_undelete(struct Menu *menu, int op, struct IndexData *idata)
 {
+  struct Mailbox *m = idata->mailbox;
+
   /* L10N: CHECK_ACL */
-  if (!check_acl(idata->mailbox, MUTT_ACL_DELETE, _("Can't undelete message")))
+  if (!check_acl(m, MUTT_ACL_DELETE, _("Can't undelete message")))
     return IR_ERROR;
 
   struct EmailList el = STAILQ_HEAD_INITIALIZER(el);
-  el_add_tagged(&el, idata->ctx, idata->cur.e, idata->tag);
-
-  mutt_emails_set_flag(idata->mailbox, &el, MUTT_DELETE, false);
-  mutt_emails_set_flag(idata->mailbox, &el, MUTT_PURGE, false);
+  int count = get_tagged_emails(idata, &el);
+  mutt_emails_set_flag(m, &el, MUTT_DELETE, 0);
+  mutt_emails_set_flag(m, &el, MUTT_PURGE, 0);
   emaillist_clear(&el);
 
-  if (idata->tag)
-  {
-    menu->redraw |= REDRAW_INDEX;
-  }
-  else
+  if (count == 1)
   {
     const bool c_resolve = cs_subset_bool(idata->sub, "resolve");
-    if (c_resolve && (menu->current < (idata->mailbox->vcount - 1)))
+    if (c_resolve && (menu->current < (m->vcount - 1)))
     {
       menu->current++;
       menu->redraw |= REDRAW_MOTION_RESYNC;
@@ -2131,9 +2154,12 @@ static enum IndexRetval op_undelete(struct Menu *menu, int op, struct IndexData 
     else
       menu->redraw |= REDRAW_CURRENT;
   }
+  else
+  {
+    menu->redraw |= REDRAW_INDEX;
+  }
 
   menu->redraw |= REDRAW_STATUS;
-
   return IR_VOID;
 }
 
@@ -2149,11 +2175,15 @@ static enum IndexRetval op_undelete_thread(struct Menu *menu, int op, struct Ind
   if (!check_acl(idata->mailbox, MUTT_ACL_DELETE, _("Can't undelete messages")))
     return IR_ERROR;
 
-  int rc = mutt_thread_set_flag(idata->mailbox, idata->cur.e, MUTT_DELETE,
-                                false, (op != OP_UNDELETE_THREAD));
+  struct Email *e = get_current_email(idata);
+  if (!e)
+    return IR_NO_ACTION;
+
+  int rc = mutt_thread_set_flag(idata->mailbox, e, MUTT_DELETE, false,
+                                (op != OP_UNDELETE_THREAD));
   if (rc != -1)
   {
-    rc = mutt_thread_set_flag(idata->mailbox, idata->cur.e, MUTT_PURGE, false,
+    rc = mutt_thread_set_flag(idata->mailbox, e, MUTT_PURGE, false,
                               (op != OP_UNDELETE_THREAD));
   }
   if (rc != -1)
@@ -2162,9 +2192,9 @@ static enum IndexRetval op_undelete_thread(struct Menu *menu, int op, struct Ind
     if (c_resolve)
     {
       if (op == OP_UNDELETE_THREAD)
-        menu->current = mutt_next_thread(idata->cur.e);
+        menu->current = mutt_next_thread(e);
       else
-        menu->current = mutt_next_subthread(idata->cur.e);
+        menu->current = mutt_next_subthread(e);
 
       if (menu->current == -1)
         menu->current = menu->oldcurrent;
@@ -2189,10 +2219,12 @@ static enum IndexRetval op_version(struct Menu *menu, int op, struct IndexData *
  */
 static enum IndexRetval op_view_attachments(struct Menu *menu, int op, struct IndexData *idata)
 {
-  if (!idata->cur.e)
+  struct Email *e = get_current_email(idata);
+  if (!e)
     return IR_NO_ACTION;
-  dlg_select_attachment(idata->cur.e);
-  if (idata->cur.e->attach_del)
+
+  dlg_select_attachment(e);
+  if (e->attach_del)
     idata->mailbox->changed = true;
   menu->redraw = REDRAW_FULL;
   return IR_VOID;
@@ -2286,16 +2318,16 @@ static enum IndexRetval op_get_children(struct Menu *menu, int op, struct IndexD
 {
   if (idata->mailbox->type != MUTT_NNTP)
     return IR_ERROR;
-
-  if (!idata->cur.e)
+  struct Email *e = get_current_email(idata);
+  if (!e)
     return IR_NO_ACTION;
 
   char buf[PATH_MAX] = { 0 };
   int oldmsgcount = idata->mailbox->msg_count;
-  int oldindex = idata->cur.e->index;
+  int oldindex = e->index;
   int rc = 0;
 
-  if (!idata->cur.e->env->message_id)
+  if (!e->env->message_id)
   {
     mutt_error(_("No Message-Id. Unable to perform operation."));
     return IR_ERROR;
@@ -2304,13 +2336,13 @@ static enum IndexRetval op_get_children(struct Menu *menu, int op, struct IndexD
   mutt_message(_("Fetching message headers..."));
   if (!idata->mailbox->id_hash)
     idata->mailbox->id_hash = mutt_make_id_hash(idata->mailbox);
-  mutt_str_copy(buf, idata->cur.e->env->message_id, sizeof(buf));
+  mutt_str_copy(buf, e->env->message_id, sizeof(buf));
 
   /* trying to find msgid of the root message */
   if (op == OP_RECONSTRUCT_THREAD)
   {
     struct ListNode *ref = NULL;
-    STAILQ_FOREACH(ref, &idata->cur.e->env->references, entries)
+    STAILQ_FOREACH(ref, &e->env->references, entries)
     {
       if (!mutt_hash_find(idata->mailbox->id_hash, ref->data))
       {
@@ -2351,7 +2383,7 @@ static enum IndexRetval op_get_children(struct Menu *menu, int op, struct IndexD
     }
 
     /* if the root message was retrieved, move to it */
-    struct Email *e = mutt_hash_find(idata->mailbox->id_hash, buf);
+    e = mutt_hash_find(idata->mailbox->id_hash, buf);
     if (e)
       menu->current = e->vnum;
     else
@@ -2407,12 +2439,13 @@ static enum IndexRetval op_get_message(struct Menu *menu, int op, struct IndexDa
     }
     else
     {
-      if (!idata->cur.e || STAILQ_EMPTY(&idata->cur.e->env->references))
+      struct Email *e = get_current_email(idata);
+      if (!e || STAILQ_EMPTY(&e->env->references))
       {
         mutt_error(_("Article has no parent reference"));
         return IR_ERROR;
       }
-      mutt_str_copy(buf, STAILQ_FIRST(&idata->cur.e->env->references)->data, sizeof(buf));
+      mutt_str_copy(buf, STAILQ_FIRST(&e->env->references)->data, sizeof(buf));
     }
     if (!idata->mailbox->id_hash)
       idata->mailbox->id_hash = mutt_make_id_hash(idata->mailbox);
@@ -2538,13 +2571,14 @@ changefoldercleanup2:
 static enum IndexRetval op_post(struct Menu *menu, int op, struct IndexData *idata)
 {
   // case OP_POST:
-  if (!idata->cur.e)
+  struct Email *e = get_current_email(idata);
+  if (!e)
     return IR_NO_ACTION;
 
   const enum QuadOption c_followup_to_poster =
       cs_subset_quad(idata->sub, "followup_to_poster");
-  if ((op != OP_FOLLOWUP) || !idata->cur.e->env->followup_to ||
-      !mutt_istr_equal(idata->cur.e->env->followup_to, "poster") ||
+  if ((op != OP_FOLLOWUP) || !e->env->followup_to ||
+      !mutt_istr_equal(e->env->followup_to, "poster") ||
       (query_quadoption(c_followup_to_poster,
                         _("Reply by mail as poster prefers?")) != MUTT_YES))
   {
@@ -2560,7 +2594,7 @@ static enum IndexRetval op_post(struct Menu *menu, int op, struct IndexData *ida
     else
     {
       struct EmailList el = STAILQ_HEAD_INITIALIZER(el);
-      el_add_tagged(&el, idata->ctx, idata->cur.e, idata->tag);
+      el_add_tagged(&el, idata->ctx, e, idata->tag);
       mutt_send_message(((op == OP_FOLLOWUP) ? SEND_REPLY : SEND_FORWARD) | SEND_NEWS,
                         NULL, NULL, idata->ctx, &el, idata->sub);
       emaillist_clear(&el);
@@ -2571,14 +2605,13 @@ static enum IndexRetval op_post(struct Menu *menu, int op, struct IndexData *ida
 
   // case OP_REPLY:
   {
-    if (!idata->cur.e)
+    if (!e)
       return IR_NO_ACTION;
     struct EmailList el = STAILQ_HEAD_INITIALIZER(el);
-    el_add_tagged(&el, idata->ctx, idata->cur.e, idata->tag);
+    el_add_tagged(&el, idata->ctx, e, idata->tag);
     const bool c_pgp_auto_decode =
         cs_subset_bool(idata->sub, "pgp_auto_decode");
-    if (c_pgp_auto_decode &&
-        (idata->tag || !(idata->cur.e->security & PGP_TRADITIONAL_CHECKED)))
+    if (c_pgp_auto_decode && (idata->tag || !(e->security & PGP_TRADITIONAL_CHECKED)))
     {
       mutt_check_traditional_pgp(idata->mailbox, &el, &menu->redraw);
     }
@@ -2602,17 +2635,19 @@ static enum IndexRetval op_main_entire_thread(struct Menu *menu, int op, struct 
   char buf[PATH_MAX] = { 0 };
   if (idata->mailbox->type != MUTT_NOTMUCH)
   {
+    struct Email *e = get_current_email(idata);
+
     if (((idata->mailbox->type != MUTT_MH) && (idata->mailbox->type != MUTT_MAILDIR)) ||
-        (!idata->cur.e || !idata->cur.e->env || !idata->cur.e->env->message_id))
+        (!e || !e->env || !e->env->message_id))
     {
       mutt_message(_("No virtual folder and no Message-Id, aborting"));
       return IR_ERROR;
     } // no virtual folder, but we have message-id, reconstruct thread on-the-fly
     strncpy(buf, "id:", sizeof(buf));
     int msg_id_offset = 0;
-    if ((idata->cur.e->env->message_id)[0] == '<')
+    if ((e->env->message_id)[0] == '<')
       msg_id_offset = 1;
-    mutt_str_cat(buf, sizeof(buf), (idata->cur.e->env->message_id) + msg_id_offset);
+    mutt_str_cat(buf, sizeof(buf), (e->env->message_id) + msg_id_offset);
     if (buf[strlen(buf) - 1] == '>')
       buf[strlen(buf) - 1] = '\0';
 
