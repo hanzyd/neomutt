@@ -594,6 +594,22 @@ struct Email *get_current_email(struct IndexData *idata)
 }
 
 /**
+ * get_tagged_emails - Get the currently tagged Emails
+ * @param idata Index Data
+ * @param el    Email List to fill
+ * @retval num Number of tagged Emails
+ *
+ * @note If no Emails are tagged, this will return the current Email
+ */
+int get_tagged_emails(struct IndexData *idata, struct EmailList *el)
+{
+  if (!idata || !el)
+    return 0;
+
+  return el_add_tagged(el, idata->ctx, idata->cur.e, idata->tag);
+}
+
+/**
  * update_index - Update the index
  * @param sub        ConfigSubset
  * @param menu       Current Menu
