@@ -1961,7 +1961,7 @@ static enum IndexRetval op_sort(struct Menu *menu, int op, struct IndexData *ida
 }
 
 /**
- * op_tag - idata->tag the current entry - Implements ::index_function_t
+ * op_tag - tag the current entry - Implements ::index_function_t
  */
 static enum IndexRetval op_tag(struct Menu *menu, int op, struct IndexData *idata)
 {
@@ -2000,7 +2000,7 @@ static enum IndexRetval op_tag(struct Menu *menu, int op, struct IndexData *idat
 }
 
 /**
- * op_tag_thread - idata->tag the current thread - Implements ::index_function_t
+ * op_tag_thread - tag the current thread - Implements ::index_function_t
  */
 static enum IndexRetval op_tag_thread(struct Menu *menu, int op, struct IndexData *idata)
 {
