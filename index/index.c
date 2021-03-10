@@ -581,6 +581,19 @@ void set_current_email(struct CurrentEmail *cur, struct Email *e)
 }
 
 /**
+ * get_current_email - Get the currently selected Email
+ * @param idata Index Data
+ * @retval ptr Current Email
+ */
+struct Email *get_current_email(struct IndexData *idata)
+{
+  if (!idata)
+    return NULL;
+
+  return idata->cur.e;
+}
+
+/**
  * update_index - Update the index
  * @param sub        ConfigSubset
  * @param menu       Current Menu
