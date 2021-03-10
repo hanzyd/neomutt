@@ -571,13 +571,16 @@ static bool is_current_email(const struct CurrentEmail *cur, const struct Email 
 
 /**
  * set_current_email - Keep track of the currently selected Email
- * @param cur Currently selected Email
- * @param e   Email to set as current
+ * @param idata Index Data
+ * @param e     Email to set as current
  */
-void set_current_email(struct CurrentEmail *cur, struct Email *e)
+void set_current_email(struct IndexData *idata, struct Email *e)
 {
-  cur->e = e;
-  cur->sequence = e ? e->sequence : 0;
+  if (!idata || !e)
+    return;
+
+  idata->cur.e = e;
+  idata->cur.sequence = e ? e->sequence : 0;
 }
 
 /**
@@ -1355,8 +1358,7 @@ int mutt_index_menu(struct MuttWindow *dlg)
 
       if (idata->ctx)
       {
-        set_current_email(&idata->cur,
-                          mutt_get_virt_email(idata->ctx->mailbox, menu->current));
+        set_current_email(idata, mutt_get_virt_email(idata->ctx->mailbox, menu->current));
       }
     }
 

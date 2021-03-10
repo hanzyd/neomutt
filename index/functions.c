@@ -287,7 +287,7 @@ static enum IndexRetval op_display_message(struct Menu *menu, int op, struct Ind
     mutt_check_traditional_pgp(idata->mailbox, &el, &menu->redraw);
     emaillist_clear(&el);
   }
-  set_current_email(&idata->cur, mutt_get_virt_email(idata->mailbox, menu->current));
+  set_current_email(idata, mutt_get_virt_email(idata->mailbox, menu->current));
 
   op = mutt_display_message(idata->win_index, idata->win_ibar, idata->win_pager,
                             idata->win_pbar, idata->mailbox, idata->cur.e);

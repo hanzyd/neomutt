@@ -71,7 +71,7 @@ bool check_acl(struct Mailbox *m, AclFlags acl, const char *msg);
 int ci_next_undeleted(struct Mailbox *m, int msgno);
 struct Email *get_current_email(struct IndexData *idata);
 int get_tagged_emails(struct IndexData *idata, struct EmailList *el);
-void set_current_email(struct CurrentEmail *cur, struct Email *e);
+void set_current_email(struct IndexData *idata, struct Email *e);
 void update_index(struct ConfigSubset *sub, struct Menu *menu, struct Context *ctx, enum MxStatus check, int oldcount, const struct CurrentEmail *cur);
 void change_folder_mailbox(struct Menu *menu, struct Mailbox *m, int *oldcount, const struct CurrentEmail *cur, bool read_only);
 void collapse_all(struct Context *ctx, struct Menu *menu, int toggle);
