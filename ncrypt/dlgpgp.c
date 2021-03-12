@@ -616,7 +616,17 @@ struct PgpKeyInfo *dlg_select_pgp_key(struct PgpKeyInfo *keys,
         char title[1024];
         snprintf(title, sizeof(title), _("Key ID: 0x%s"),
                  pgp_keyid(pgp_principal_key(key_table[menu->current]->parent)));
-        mutt_do_pager(title, mutt_buffer_string(tempfile), MUTT_PAGER_NO_FLAGS, NULL);
+
+        struct PagerView view = { 0 };
+        struct PagerData data = { 0 };
+
+        data.fname  = mutt_buffer_string(tempfile);
+        view.banner = title;
+        view.flags  = MUTT_PAGER_NO_FLAGS;
+        view.mode   = PAGER_MODE_OTHER;
+        view.data   = &data;
+        // TODO check return value here
+        mutt_do_pager(&view);
         mutt_buffer_pool_release(&tempfile);
         menu->redraw = REDRAW_FULL;
         break;

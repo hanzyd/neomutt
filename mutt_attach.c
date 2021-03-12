@@ -437,9 +437,9 @@ int mutt_view_attachment(FILE *fp, struct Body *a, enum ViewAttachMode mode,
   struct Buffer *pagerfile = mutt_buffer_pool_get();
   struct Buffer *cmd = mutt_buffer_pool_get();
 
-  use_mailcap = ((mode == MUTT_VA_MAILCAP) ||
-                 ((mode == MUTT_VA_REGULAR) && mutt_needs_mailcap(a)) ||
-                 (mode == MUTT_VA_PAGER));
+  use_mailcap = ((mode == MUTT_VA_MAILCAP)
+              ||((mode == MUTT_VA_REGULAR) && mutt_needs_mailcap(a))
+              || (mode == MUTT_VA_PAGER));
   snprintf(type, sizeof(type), "%s/%s", TYPE(a), a->subtype);
 
   char columns[16];
@@ -653,16 +653,22 @@ int mutt_view_attachment(FILE *fp, struct Body *a, enum ViewAttachMode mode,
 
   if (use_pager)
   {
-    struct Pager info = { 0 };
-    info.fp = fp;
-    info.body = a;
-    info.ctx = Contex2;
-    info.actx = actx;
-    info.email = e;
+    struct PagerData data = { 0 };
+    struct PagerView view = { 0 };
 
-    rc = mutt_do_pager(desc, mutt_buffer_string(pagerfile),
-                       MUTT_PAGER_ATTACHMENT | (is_message ? MUTT_PAGER_MESSAGE : MUTT_PAGER_NO_FLAGS),
-                       &info);
+    data.actx         = actx;
+    data.body         = a;
+    data.email        = e;
+    data.fname        = mutt_buffer_string(pagerfile);
+    data.fp           = fp;
+    data.ctx          = Contex2;
+
+    view.banner       = desc;
+    view.flags        = MUTT_PAGER_ATTACHMENT | (is_message ? MUTT_PAGER_MESSAGE : MUTT_PAGER_NO_FLAGS);
+    view.mode         = PAGER_MODE_ATTACH; // TODO check if we can distinguish between PAGER_MODE_ATTACH_E here
+    view.data         = &data;
+    rc                = mutt_do_pager(&view);
+
     mutt_buffer_reset(pagerfile);
     unlink_pagerfile = false;
   }

@@ -368,15 +368,24 @@ int mutt_display_message(struct MuttWindow *win_index, struct MuttWindow *win_ib
         mutt_message(_("PGP signature could NOT be verified"));
     }
 
-    struct Pager info = { 0 };
+
     /* Invoke the builtin pager */
-    info.email = e;
-    info.ctx = Contex2;
-    info.win_ibar = win_ibar;
-    info.win_index = win_index;
-    info.win_pbar = win_pbar;
-    info.win_pager = win_pager;
-    rc = mutt_pager(NULL, mutt_buffer_string(tempfile), MUTT_PAGER_MESSAGE, &info);
+    struct PagerData data = { 0 };
+    struct PagerView view = { 0 };
+
+    data.email   = e;
+    data.ctx     = Contex2;
+    data.fname   = mutt_buffer_string(tempfile);
+
+    view.mode          = PAGER_MODE_EMAIL;
+    view.banner        = NULL;
+    view.flags         = MUTT_PAGER_MESSAGE;
+    view.win_ibar      = win_ibar;
+    view.win_index     = win_index;
+    view.win_pbar      = win_pbar;
+    view.win_pager     = win_pager;
+    view.data          = &data;
+    rc = mutt_pager(&view);
   }
   else
   {

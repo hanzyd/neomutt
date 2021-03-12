@@ -1797,7 +1797,17 @@ int mutt_index_menu(struct MuttWindow *dlg)
         log_queue_save(fp);
         mutt_file_fclose(&fp);
 
-        mutt_do_pager("messages", tempfile, MUTT_PAGER_LOGS, NULL);
+        struct PagerView view = { 0 };
+        struct PagerData data = { 0 };
+
+        data.fname  = tempfile;
+        view.banner = "messages";
+        view.flags  = MUTT_PAGER_LOGS;
+        view.mode   = PAGER_MODE_OTHER;
+        view.data   = &data;
+
+        // TODO check return value here
+        mutt_do_pager(&view);
         break;
       }
 

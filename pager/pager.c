@@ -159,33 +159,31 @@ struct Resize
  */
 struct PagerRedrawData
 {
-  PagerFlags flags;
-  struct Pager *extra;
-  int indexlen;
-  int indicator; ///< the indicator line of the PI
-  int oldtopline;
-  int lines;
-  int max_line;
-  int last_line;
-  int curline;
-  int topline;
-  bool force_redraw;
-  int has_types;
-  PagerFlags hide_quoted;
-  int q_level;
-  struct QClass *quote_list;
-  LOFF_T last_pos;
-  LOFF_T last_offset;
-  struct Menu *menu; ///< the Pager Index (PI)
-  regex_t search_re;
-  bool search_compiled;
-  PagerFlags search_flag;
-  bool search_back;
-  const char *banner;
-  char *searchbuf;
-  struct Line *line_info;
-  FILE *fp;
-  struct stat sb;
+  struct PagerView* view;
+  int               indexlen;
+  int               indicator;    ///< the indicator line of the PI
+  int               oldtopline;
+  int               lines;
+  int               max_line;
+  int               last_line;
+  int               curline;
+  int               topline;
+  bool              force_redraw;
+  int               has_types;    // TODO is this a bool or a flag?
+  PagerFlags        hide_quoted;  // TODO can this be removed in favor of view->flags?
+  int               q_level;
+  struct QClass*    quote_list;
+  LOFF_T            last_pos;
+  LOFF_T            last_offset;
+  struct Menu*      menu;         ///< the Pager Index (PI)
+  regex_t           search_re;
+  bool              search_compiled;
+  PagerFlags        search_flag;  // TODO can this be removed in favor of view->flags?
+  bool              search_back;
+  char*             searchbuf;
+  struct Line*      line_info;
+  FILE*             fp;           // TODO: view->data already contains this
+  struct stat       sb;           // TODO: this too can be passed from mutt_pager()
 };
 
 /* hack to return to position when returning from index to same message */
@@ -259,58 +257,6 @@ static const struct Mapping PagerNewsHelp[] = {
 #endif
 
 #define IS_HEADER(x) ((x) == MT_COLOR_HEADER || (x) == MT_COLOR_HDRDEFAULT)
-
-// The macros below appear to be used to determine what mode pagers is
-// operating in. In order to
-// - bring some clarity
-// - prepare for further refactoring
-// I decided to write this comment.
-//
-// There are 10 code paths that lead to mutt_pager() invocation:
-//
-// 1. mutt_index_menu -> mutt_display_message -> mutt_pager
-//
-//    This path always results in mailbox and email set,
-//    the rest is unset - Body, fp.
-//    This invocation can be identified by IsEmail macro.
-//    The intent is to display an email message
-//
-// 2. mutt_view_attachment -> mutt_do_pager -> mutt_pager
-//
-//    this path always results in email, body, ctx set
-//    this invocation can be identified by one of the two macros
-//    - IsAttach (the Body could be any old attachment)
-//    - IsMsgAttach (or a full Email message)
-//    The distinction between the two is set/unset fp and the following:
-//
-//    The intent is to display an attachment of the email message
-//
-// 3. The following 8 invocations are similar, because they all call
-//    mutt_do_page with info = NULL
-//
-//    And so it results in mailbox, body, fp set to NULL.
-//    The intent is to show user some text that is not
-//    directly related to viewing emails,
-//    e.g. help, log messages,gpg key selection etc.
-//
-//    No macro identifies these invocations
-//
-//    mutt_index_menu       -> mutt_do_pager -> mutt_pager
-//    mutt_help             -> mutt_do_pager -> mutt_pager
-//    icmd_bind             -> mutt_do_pager -> mutt_pager
-//    icmd_set              -> mutt_do_pager -> mutt_pager
-//    icmd_version          -> mutt_do_pager -> mutt_pager
-//    dlg_select_pgp_key    -> mutt_do_pager -> mutt_pager
-//    verify_key            -> mutt_do_pager -> mutt_pager
-//    mutt_invoke_sendmail  -> mutt_do_pager -> mutt_pager
-//
-// See nice infographic here:
-// https://gist.github.com/flatcap/044ecbd2498c65ea9a85099ef317509a
-
-#define IsAttach(pager) (pager && (pager)->body)
-#define IsMsgAttach(pager)                                                     \
-  (pager && (pager)->fp && (pager)->body && (pager)->body->email)
-#define IsEmail(pager) (pager && (pager)->email && !(pager)->body)
 
 /**
  * assert_pager_mode - Check that pager is in correct mode
@@ -2081,35 +2027,49 @@ void mutt_clear_pager_position(void)
  */
 static void pager_custom_redraw(struct Menu *pager_menu)
 {
+
+  //---------------------------------------------------------------------------
+  // ASSUMPTIONS & SANITY CHECKS
+  //---------------------------------------------------------------------------
+  // Since pager_custom_redraw() is a static function and it is always called
+  // after mutt_pager() we can rely on a series of sanity checks in
+  // mutt_pager(), namely:
+  // - PAGER_MODE_EMAIL  guarantees ( data->email) and (!data->body)
+  // - PAGER_MODE_ATTACH guarantees ( data->email) and ( data->body)
+  // - PAGER_MODE_OTHER  guarantees (!data->email) and (!data->body)
+  //
+  // Additionally, while refactoring is still in progress the following checks
+  // are still here to ensure data model consistency.
   assert(pager_menu);
-  struct PagerRedrawData *rd = pager_menu->redraw_data;
-  struct Mailbox *m = NULL;
-  char buf[1024];
-  int msg_in_pager = -1;
-  const bool c_tilde = cs_subset_bool(NeoMutt->sub, "tilde");
+  struct PagerRedrawData* rd = pager_menu->redraw_data;
+  assert(rd);             // Redraw function can't be called without it's data.
+  assert(rd->view);       // Redraw data can't exist separately without the view.
+  assert(rd->view->data); // View can't exist without it's data
+  //---------------------------------------------------------------------------
+
+  char buf[1024]             = { 0 };
+  struct Mailbox* m          = rd->view->data->ctx ? rd->view->data->ctx->mailbox : NULL;
+
+  const bool c_tilde =
+      cs_subset_bool(NeoMutt->sub, "tilde");
   const short c_pager_index_lines =
       cs_subset_number(NeoMutt->sub, "pager_index_lines");
-
-  if (!rd)
-    return;
-
-  if (rd->extra && rd->extra->ctx)
-  {
-    m = rd->extra->ctx->mailbox;
-    msg_in_pager = rd->extra->ctx->msg_in_pager;
-  }
 
   if (pager_menu->redraw & REDRAW_FULL)
   {
     mutt_curses_set_color(MT_COLOR_NORMAL);
-    mutt_window_clear(rd->extra->win_pager);
+    mutt_window_clear(rd->view->win_pager);
 
-    if (IsEmail(rd->extra) && m && ((m->vcount + 1) < c_pager_index_lines))
+    // TODO: give a meaningful name to:
+    // ((m->vcount + 1) < c_pager_index_lines))
+    if (rd->view->mode == PAGER_MODE_EMAIL && ((m->vcount + 1) < c_pager_index_lines))
     {
       rd->indexlen = m->vcount + 1;
     }
     else
+    {
       rd->indexlen = c_pager_index_lines;
+    }
 
     rd->indicator = rd->indexlen / 3;
 
@@ -2138,23 +2098,25 @@ static void pager_custom_redraw(struct Menu *pager_menu)
       FREE(&Resize);
     }
 
-    if (IsEmail(rd->extra) && (c_pager_index_lines != 0))
+    // TODO give a meaningful name to
+    // (c_pager_index_lines != 0) e.g. "is_index_visible"
+    if (rd->view->mode == PAGER_MODE_EMAIL && (c_pager_index_lines != 0))
     {
       if (!rd->menu)
       {
         /* only allocate the space if/when we need the index.
          * Initialise the menu as per the main index */
-        rd->menu = mutt_menu_new(MENU_MAIN);
+        rd->menu             = mutt_menu_new(MENU_MAIN);
         rd->menu->make_entry = index_make_entry;
-        rd->menu->color = index_color;
-        rd->menu->max = m ? m->vcount : 0;
-        rd->menu->current = rd->extra->email->vnum;
-        rd->menu->win_index = rd->extra->win_index;
-        rd->menu->win_ibar = rd->extra->win_ibar;
+        rd->menu->color      = index_color;
+        rd->menu->max        = m ? m->vcount : 0;
+        rd->menu->current    = rd->view->data->email->vnum;
+        rd->menu->win_index  = rd->view->win_index;
+        rd->menu->win_ibar   = rd->view->win_ibar;
       }
 
       mutt_curses_set_color(MT_COLOR_NORMAL);
-      rd->menu->pagelen = rd->extra->win_index->state.rows;
+      rd->menu->pagelen = rd->view->win_index->state.rows;
 
       /* some fudge to work out whereabouts the indicator should go */
       if (rd->menu->current - rd->indicator < 0)
@@ -2173,7 +2135,7 @@ static void pager_custom_redraw(struct Menu *pager_menu)
 
   if (pager_menu->redraw & REDRAW_FLOW)
   {
-    if (!(rd->flags & MUTT_PAGER_RETWINCH))
+    if (!(rd->view->flags & MUTT_PAGER_RETWINCH))
     {
       rd->lines = -1;
       for (int i = 0; i <= rd->topline; i++)
@@ -2181,12 +2143,12 @@ static void pager_custom_redraw(struct Menu *pager_menu)
           rd->lines++;
       for (int i = 0; i < rd->max_line; i++)
       {
-        rd->line_info[i].offset = 0;
-        rd->line_info[i].type = -1;
+        rd->line_info[i].offset       = 0;
+        rd->line_info[i].type         = -1;
         rd->line_info[i].continuation = 0;
-        rd->line_info[i].chunks = 0;
-        rd->line_info[i].search_cnt = -1;
-        rd->line_info[i].quote = NULL;
+        rd->line_info[i].chunks       = 0;
+        rd->line_info[i].search_cnt   = -1;
+        rd->line_info[i].quote        = NULL;
 
         mutt_mem_realloc(&(rd->line_info[i].syntax), sizeof(struct TextSyntax));
         if (rd->search_compiled && rd->line_info[i].search)
@@ -2199,9 +2161,9 @@ static void pager_custom_redraw(struct Menu *pager_menu)
     int i = -1;
     int j = -1;
     while (display_line(rd->fp, &rd->last_pos, &rd->line_info, ++i, &rd->last_line,
-                        &rd->max_line, rd->has_types | rd->search_flag | (rd->flags & MUTT_PAGER_NOWRAP),
+                        &rd->max_line, rd->has_types | rd->search_flag | (rd->view->flags & MUTT_PAGER_NOWRAP),
                         &rd->quote_list, &rd->q_level, &rd->force_redraw,
-                        &rd->search_re, rd->extra->win_pager) == 0)
+                        &rd->search_re, rd->view->win_pager) == 0)
     {
       if (!rd->line_info[i].continuation && (++j == rd->lines))
       {
@@ -2216,38 +2178,38 @@ static void pager_custom_redraw(struct Menu *pager_menu)
   {
     do
     {
-      mutt_window_move(rd->extra->win_pager, 0, 0);
+      mutt_window_move(rd->view->win_pager, 0, 0);
       rd->curline = rd->topline;
       rd->oldtopline = rd->topline;
       rd->lines = 0;
       rd->force_redraw = false;
 
-      while ((rd->lines < rd->extra->win_pager->state.rows) &&
+      while ((rd->lines < rd->view->win_pager->state.rows) &&
              (rd->line_info[rd->curline].offset <= rd->sb.st_size - 1))
       {
         if (display_line(rd->fp, &rd->last_pos, &rd->line_info, rd->curline,
                          &rd->last_line, &rd->max_line,
-                         (rd->flags & MUTT_DISPLAYFLAGS) | rd->hide_quoted |
-                             rd->search_flag | (rd->flags & MUTT_PAGER_NOWRAP),
+                         (rd->view->flags & MUTT_DISPLAYFLAGS) | rd->hide_quoted |
+                             rd->search_flag | (rd->view->flags & MUTT_PAGER_NOWRAP),
                          &rd->quote_list, &rd->q_level, &rd->force_redraw,
-                         &rd->search_re, rd->extra->win_pager) > 0)
+                         &rd->search_re, rd->view->win_pager) > 0)
         {
           rd->lines++;
         }
         rd->curline++;
-        mutt_window_move(rd->extra->win_pager, 0, rd->lines);
+        mutt_window_move(rd->view->win_pager, 0, rd->lines);
       }
       rd->last_offset = rd->line_info[rd->curline].offset;
     } while (rd->force_redraw);
 
     mutt_curses_set_color(MT_COLOR_TILDE);
-    while (rd->lines < rd->extra->win_pager->state.rows)
+    while (rd->lines < rd->view->win_pager->state.rows)
     {
-      mutt_window_clrtoeol(rd->extra->win_pager);
+      mutt_window_clrtoeol(rd->view->win_pager);
       if (c_tilde)
         mutt_window_addch('~');
       rd->lines++;
-      mutt_window_move(rd->extra->win_pager, 0, rd->lines);
+      mutt_window_move(rd->view->win_pager, 0, rd->lines);
     }
     mutt_curses_set_color(MT_COLOR_NORMAL);
 
@@ -2277,28 +2239,31 @@ static void pager_custom_redraw(struct Menu *pager_menu)
     }
 
     /* print out the pager status bar */
-    mutt_window_move(rd->extra->win_pbar, 0, 0);
+    mutt_window_move(rd->view->win_pbar, 0, 0);
     mutt_curses_set_color(MT_COLOR_STATUS);
 
-    if (IsEmail(rd->extra) || IsMsgAttach(rd->extra))
+    if (rd->view->mode == PAGER_MODE_EMAIL || rd->view->mode == PAGER_MODE_ATTACH_E)
     {
-      const size_t l1 = rd->extra->win_pbar->state.cols * MB_LEN_MAX;
-      const size_t l2 = sizeof(buf);
+      const size_t l1  = rd->view->win_pbar->state.cols * MB_LEN_MAX;
+      const size_t l2  = sizeof(buf);
       const int buflen = (l1 < l2) ? l1 : l2;
       struct Email *e =
-          (IsEmail(rd->extra)) ? rd->extra->email : rd->extra->body->email;
+          (rd->view->mode == PAGER_MODE_EMAIL)
+          ? rd->view->data->email       // PAGER_MODE_EMAIL
+          : rd->view->data->body->email;// PAGER_MODE_ATTACH_E
+
       const char *const c_pager_format =
           cs_subset_string(NeoMutt->sub, "pager_format");
-      mutt_make_string(buf, buflen, rd->extra->win_pbar->state.cols,
-                       NONULL(c_pager_format), m, msg_in_pager, e,
+      mutt_make_string(buf, buflen, rd->view->win_pbar->state.cols,
+                       NONULL(c_pager_format), m, rd->view->data->ctx->msg_in_pager, e,
                        MUTT_FORMAT_NO_FLAGS, pager_progress_str);
-      mutt_draw_statusline(rd->extra->win_pbar->state.cols, buf, l2);
+      mutt_draw_statusline(rd->view->win_pbar->state.cols, buf, l2);
     }
     else
     {
       char bn[256];
-      snprintf(bn, sizeof(bn), "%s (%s)", rd->banner, pager_progress_str);
-      mutt_draw_statusline(rd->extra->win_pbar->state.cols, bn, sizeof(bn));
+      snprintf(bn, sizeof(bn), "%s (%s)", rd->view->banner, pager_progress_str);
+      mutt_draw_statusline(rd->view->win_pbar->state.cols, bn, sizeof(bn));
     }
     mutt_curses_set_color(MT_COLOR_NORMAL);
     const bool c_ts_enabled = cs_subset_bool(NeoMutt->sub, "ts_enabled");
@@ -2319,7 +2284,7 @@ static void pager_custom_redraw(struct Menu *pager_menu)
   {
     /* redraw the pager_index indicator, because the
      * flags for this message might have changed. */
-    if (rd->extra->win_index->state.rows > 0)
+    if (rd->view->win_index->state.rows > 0)
       menu_redraw_current(rd->menu);
 
     /* print out the index status bar */
@@ -2327,40 +2292,120 @@ static void pager_custom_redraw(struct Menu *pager_menu)
         cs_subset_string(NeoMutt->sub, "status_format");
     menu_status_line(buf, sizeof(buf), rd->menu, m, NONULL(c_status_format));
 
-    mutt_window_move(rd->extra->win_ibar, 0, 0);
+    mutt_window_move(rd->view->win_ibar, 0, 0);
     mutt_curses_set_color(MT_COLOR_STATUS);
-    mutt_draw_statusline(rd->extra->win_ibar->state.cols, buf, sizeof(buf));
+    mutt_draw_statusline(rd->view->win_ibar->state.cols, buf, sizeof(buf));
     mutt_curses_set_color(MT_COLOR_NORMAL);
   }
 
   pager_menu->redraw = REDRAW_NO_FLAGS;
 }
 
+
+// clang-format off
 /**
- * mutt_pager - Display a file, or help, in a window
- * @param banner Title to display in status bar
- * @param fname  Name of file to read
- * @param flags  Flags, e.g. #MUTT_SHOWCOLOR
- * @param extra  Info about email to display
+ * mutt_pager - Display a an email, attachment, or help, in a window
+ * @param data  Data to display
+ * @param view  Pager view settings
  * @retval  0 Success
  * @retval -1 Error
  *
- * This pager is actually not so simple as it once was.  It now operates in two
- * modes: one for viewing messages and the other for viewing help.  These can
- * be distinguished by whether or not "email" is NULL.  The "email" arg is
- * there so that we can do operations on the current message without the need
- * to pop back out to the main-menu.
+ * This pager is actually not so simple as it once was. But it will be again.
+ * Currently it operates in 3 modes:
+ * - viewing messages.                (PAGER_MODE_EMAIL)
+ * - viewing attachments.             (PAGER_MODE_ATTACH)
+ * - viewing other stuff (e.g. help). (PAGER_MODE_OTHER)
+ * These can be distinguished by PagerMode in PagerView.
+ * Data is not yet polymorphic and is fused into a single struct (PagerData).
+ * Different elements of PagerData are expected to be present depending on the
+ * mode:
+ * - PAGER_MODE_EMAIL expects data->email and not expects data->body
+ * - PAGER_MODE_ATTACH expects data->email and data->body
+ *   special sub-case of this mode is viewing attached email message
+ *   it is recognized by presence of data->fp and data->body->email
+ * - PAGER_MODE_OTHER does not expect data->email or data->body
+ *
+ * ------------------------------------------------------------------------
+ * WARNING: CLOSE YOUR EDITOR AND GO AWAY. THIS CODE CONTAINS DISTURBING OR
+ * INAPPROPRIATE IDEAS! YOUR SANITY IS IN DANGER! YOU'VE BEEN WARNED.
+ *
+ * Pager is delegating certain operations to index using a series of gross
+ * hacks (each deserves a separate paragraph):
+ * - TopLine&OldEmail hack
+ * - stdin hack
+ *
+ *  TopLine & OldEmail
+ *  ------------------
+ *
+ *  stdin hack
+ *  ----------
+ *
+ * ------------------------------------------------------------------------
  */
-int mutt_pager(const char *banner, const char *fname, PagerFlags flags, struct Pager *extra)
+int mutt_pager(struct PagerView* view)
 {
-  assert(extra);
-  struct Mailbox *m = NULL;
-  static char searchbuf[256] = { 0 };
-  char buf[1024];
-  int ch = 0, rc = -1;
-  bool first = true;
-  int searchctx = 0;
-  bool wrapped = false;
+  //===========================================================================
+  // ACT 1 - Ensure sanity of the caller and determine the mode
+  //===========================================================================
+  assert(view);
+  assert(view->mode > PAGER_MODE_UNKNOWN && view->mode < PAGER_MODE_MAX);
+  assert(view->data); // view can't exist in a vacuum
+
+
+  switch (view->mode)
+  // TODO cast data do concrete type here and run corresponding function
+  {
+      case PAGER_MODE_EMAIL:
+        // This case was previously identified by IsEmail macro
+        // we expect data to contain email and not contain body
+        // We also expect email to always belong to some mailbox
+        assert(view->data->email);
+        assert(view->data->ctx);
+        assert(view->data->ctx->mailbox);
+        assert(!view->data->body);
+
+        break;
+
+      case PAGER_MODE_ATTACH:
+        // this case was previously identifie by dIsAttach and IsMsgAttach
+        // macrosi, we expect data to contain:
+        //  - body (viewing regular attachment)
+        //  - email
+        //  - fp and body->email in special case of viewing an attached email.
+        assert(view->data->email); // This should point to the top level email
+        assert(view->data->body);
+        assert(view->data->ctx);
+        assert(view->data->ctx->mailbox);
+        if (view->data->fp && view->data->body->email)
+        // Special case: attachment is a full-blown email message.
+        // Yes, emails can contain other emails. Welcome to the real world, Neo.
+        {
+          // TODO: refactor this ugliness in the next iteration of refactoring.
+          view->mode = PAGER_MODE_ATTACH_E;
+        }
+        break;
+
+      case PAGER_MODE_OTHER:
+        assert(!view->data->email);
+        assert(!view->data->body);
+        assert(!view->data->ctx);
+        break;
+
+      case PAGER_MODE_UNKNOWN:
+      case PAGER_MODE_MAX:
+      default:
+        // Unexpected mode. Catch fire and explode.
+        // This *should* happen if mode is PAGER_MODE_ATTACH_E, since
+        // we do not expect any caller to pass it to us.
+        assert(false);
+        break;
+  }
+
+  //===========================================================================
+  // ACT 2 - Declare, initialize local variables, read config, etc.
+  //===========================================================================
+
+  //---------- reading config values ------------------------------------------
   const bool c_pager_stop = cs_subset_bool(NeoMutt->sub, "pager_stop");
   const short c_pager_context = cs_subset_number(NeoMutt->sub, "pager_context");
   const short c_pager_index_lines =
@@ -2370,105 +2415,126 @@ int mutt_pager(const char *banner, const char *fname, PagerFlags flags, struct P
   const short c_skip_quoted_offset =
       cs_subset_number(NeoMutt->sub, "skip_quoted_offset");
 
-  struct Menu *pager_menu = NULL;
-  int old_PagerIndexLines; /* some people want to resize it while inside the pager */
+  //---------- local variables ------------------------------------------------
+  struct PagerRedrawData rd         = { 0 };
+  struct Menu*           pager_menu = NULL;
+  struct Mailbox*        m          = view->data->ctx ? view->data->ctx->mailbox : NULL;
+
+  static char searchbuf[256] = { 0 };
 #ifdef USE_NNTP
-  char *followup_to = NULL;
+  char* followup_to          = NULL;
 #endif
+  char buf[1024];
 
-  if (!(flags & MUTT_SHOWCOLOR))
-    flags |= MUTT_SHOWFLAT;
+  int ch                     = 0;
+  int rc                     = -1;
+  int searchctx              = 0;
+  int index_space            = m ? MIN(c_pager_index_lines, m->vcount) : c_pager_index_lines;
+  int old_PagerIndexLines    = index_space;     // some people want to resize it while inside the pager
 
-  int index_space = c_pager_index_lines;
-  if (extra->ctx && extra->ctx->mailbox)
-  {
-    index_space = MIN(index_space, extra->ctx->mailbox->vcount);
-    m = extra->ctx->mailbox;
-  }
+  bool first                 = true;
+  bool wrapped               = false;
 
-  struct PagerRedrawData rd = { 0 };
-  rd.banner = banner;
-  rd.flags = flags;
-  rd.extra = extra;
-  rd.indexlen = index_space;
-  rd.indicator = rd.indexlen / 3;
-  rd.searchbuf = searchbuf;
-  rd.has_types = (IsEmail(extra) || (flags & MUTT_SHOWCOLOR)) ? MUTT_TYPES : 0; /* main message or rfc822 attachment */
+  //---------- initialize redraw data -----------------------------------------
 
-  rd.fp = fopen(fname, "r");
+  rd.view         = view;
+  rd.indexlen     = c_pager_index_lines;
+  rd.indicator    = rd.indexlen / 3;
+  rd.searchbuf    = searchbuf;
+  rd.fp           = fopen(view->data->fname, "r");
+  rd.has_types    = ((view->mode == PAGER_MODE_EMAIL) || (view->flags & MUTT_SHOWCOLOR))
+      ? MUTT_TYPES
+      : 0;                           // main message or rfc822 attachment
+
   if (!rd.fp)
   {
-    mutt_perror(fname);
+    mutt_perror(view->data->fname);
     return -1;
   }
 
-  if (stat(fname, &rd.sb) != 0)
+  if (stat(view->data->fname, &rd.sb) != 0)
   {
-    mutt_perror(fname);
+    mutt_perror(view->data->fname);
     mutt_file_fclose(&rd.fp);
     return -1;
   }
-  unlink(fname);
+  unlink(view->data->fname);
 
-  if (rd.extra->win_index)
+  // TODO: @flatcap: are MUTT_SHOWCOLOR and MUTT_SHOWFLAT mutually exclusive?
+  if (!(view->flags & MUTT_SHOWCOLOR))
+    view->flags |= MUTT_SHOWFLAT;
+
+
+  if (rd.view->win_index)
   {
-    rd.extra->win_index->size = MUTT_WIN_SIZE_FIXED;
-    rd.extra->win_index->req_rows = index_space;
-    rd.extra->win_index->parent->size = MUTT_WIN_SIZE_MINIMISE;
-    window_set_visible(rd.extra->win_index->parent, (index_space > 0));
+    rd.view->win_index->size         = MUTT_WIN_SIZE_FIXED;
+    rd.view->win_index->req_rows     = index_space;
+    rd.view->win_index->parent->size = MUTT_WIN_SIZE_MINIMISE;
+    window_set_visible(rd.view->win_index->parent, (index_space > 0));
   }
-  window_set_visible(rd.extra->win_pager->parent, true);
-  rd.extra->win_pager->size = MUTT_WIN_SIZE_MAXIMISE;
-  mutt_window_reflow(dialog_find(rd.extra->win_pager));
+  window_set_visible(rd.view->win_pager->parent, true);
+  rd.view->win_pager->size = MUTT_WIN_SIZE_MAXIMISE;
+  mutt_window_reflow(dialog_find(rd.view->win_pager));
 
-  /* Initialize variables */
+  // Initialize variables
 
-  if (IsEmail(extra) && !extra->email->read && extra->ctx)
+  if (view->mode == PAGER_MODE_EMAIL && !view->data->email->read)
   {
-    extra->ctx->msg_in_pager = extra->email->msgno;
-    mutt_set_flag(m, extra->email, MUTT_READ, true);
+    view->data->ctx->msg_in_pager = view->data->email->msgno;
+    mutt_set_flag(m, view->data->email, MUTT_READ, true);
   }
 
-  rd.max_line = LINES; /* number of lines on screen, from curses */
+  rd.max_line  = LINES; // number of lines on screen, from curses
   rd.line_info = mutt_mem_calloc(rd.max_line, sizeof(struct Line));
   for (size_t i = 0; i < rd.max_line; i++)
   {
-    rd.line_info[i].type = -1;
-    rd.line_info[i].search_cnt = -1;
-    rd.line_info[i].syntax = mutt_mem_malloc(sizeof(struct TextSyntax));
+    rd.line_info[i].type              = -1;
+    rd.line_info[i].search_cnt        = -1;
+    rd.line_info[i].syntax            = mutt_mem_malloc(sizeof(struct TextSyntax));
     (rd.line_info[i].syntax)[0].first = -1;
-    (rd.line_info[i].syntax)[0].last = -1;
+    (rd.line_info[i].syntax)[0].last  = -1;
   }
 
   pager_menu = mutt_menu_new(MENU_PAGER);
-  pager_menu->pagelen = extra->win_pager->state.rows;
-  pager_menu->win_index = extra->win_pager;
-  pager_menu->win_ibar = extra->win_pbar;
-
+  pager_menu->pagelen       = view->win_pager->state.rows;
+  pager_menu->win_index     = view->win_pager;
+  pager_menu->win_ibar      = view->win_pbar;
   pager_menu->custom_redraw = pager_custom_redraw;
-  pager_menu->redraw_data = &rd;
+  pager_menu->redraw_data   = &rd;
   mutt_menu_push_current(pager_menu);
 
-  if (IsEmail(extra))
-  {
-    // Viewing a Mailbox
+  switch (view->mode) {
+    case PAGER_MODE_EMAIL:
+    case PAGER_MODE_ATTACH:
+    case PAGER_MODE_ATTACH_E:
 #ifdef USE_NNTP
-    if (m && (m->type == MUTT_NNTP))
-      extra->win_pager->help_data = PagerNewsHelp;
-    else
+      if (m && (m->type == MUTT_NNTP))
+      {
+        view->win_pager->help_data = PagerNewsHelp;
+      }
+      else
 #endif
-      extra->win_pager->help_data = PagerNormalHelp;
+      {
+        view->win_pager->help_data = PagerNormalHelp;
+      }
+      break;
+
+    case PAGER_MODE_OTHER:
+      if (InHelp)
+        view->win_pager->help_data = PagerHelpHelp;
+      else
+        view->win_pager->help_data = PagerHelp;
+      break;
+
+    case PAGER_MODE_UNKNOWN:
+    case PAGER_MODE_MAX:
+    default:
+      // should be impossible
+      assert(false);
   }
-  else
-  {
-    // Viewing Help
-    if (InHelp)
-      extra->win_pager->help_data = PagerHelpHelp;
-    else
-      extra->win_pager->help_data = PagerHelp;
-  }
-  extra->win_pager->help_menu = MENU_PAGER;
-  window_set_focus(extra->win_pager);
+
+  view->win_pager->help_menu = MENU_PAGER;
+  window_set_focus(view->win_pager);
 
   while (ch != -1)
   {
@@ -2488,12 +2554,19 @@ int mutt_pager(const char *banner, const char *fname, PagerFlags flags, struct P
       }
     }
     else
-      mutt_window_move(rd.extra->win_pbar, rd.extra->win_pager->state.cols - 1, 0);
+      mutt_window_move(rd.view->win_pbar, rd.view->win_pager->state.cols - 1, 0);
 
     mutt_refresh();
 
-    if (IsEmail(extra) && (OldEmail == extra->email) && (TopLine != rd.topline) &&
-        (rd.line_info[rd.curline].offset < (rd.sb.st_size - 1)))
+
+    //-------------------------------------------------------------------------
+    // FIXME: TopLine&OldEmail hack
+    // this is when pager is re-called by index, after a hacky "delegation"
+    // TopLine was keeping the old position where user was viewing someting
+    if (view->mode == PAGER_MODE_EMAIL
+         && (OldEmail == view->data->email)
+         && (TopLine != rd.topline)
+         && (rd.line_info[rd.curline].offset < (rd.sb.st_size - 1)))
     {
       if ((TopLine - rd.topline) > rd.lines)
         rd.topline += rd.lines;
@@ -2502,8 +2575,9 @@ int mutt_pager(const char *banner, const char *fname, PagerFlags flags, struct P
       continue;
     }
     else
+    {
       OldEmail = NULL;
-
+    }
     bool do_new_mail = false;
 
     if (m && !OptAttachMsg)
@@ -2520,8 +2594,9 @@ int mutt_pager(const char *banner, const char *fname, PagerFlags flags, struct P
           break;
         }
       }
-      else if ((check == MX_STATUS_NEW_MAIL) || (check == MX_STATUS_REOPENED) ||
-               (check == MX_STATUS_FLAGS))
+      else if ((check == MX_STATUS_NEW_MAIL)
+            || (check == MX_STATUS_REOPENED)
+            || (check == MX_STATUS_FLAGS))
       {
         /* notify user of newly arrived mail */
         if (check == MX_STATUS_NEW_MAIL)
@@ -2552,7 +2627,8 @@ int mutt_pager(const char *banner, const char *fname, PagerFlags flags, struct P
 
             bool verbose = m->verbose;
             m->verbose = false;
-            mutt_update_index(rd.menu, extra->ctx, check, oldcount, e);
+            // TODO check in mutt_update_index really needs ctx
+            mutt_update_index(rd.menu, view->data->ctx, check, oldcount, e);
             m->verbose = verbose;
 
             rd.menu->max = m->vcount;
@@ -2562,9 +2638,9 @@ int mutt_pager(const char *banner, const char *fname, PagerFlags flags, struct P
              * This have a unpleasant behaviour to close the pager even the
              * deleted message is not the opened one, but at least it's safe. */
             e = mutt_get_virt_email(m, rd.menu->current);
-            if (extra->email != e)
+            if (view->data->email != e)
             {
-              extra->email = e;
+              view->data->email = e;
               break;
             }
           }
@@ -2598,7 +2674,7 @@ int mutt_pager(const char *banner, const char *fname, PagerFlags flags, struct P
       clearok(stdscr, true); /* force complete redraw */
       mutt_window_clearline(MessageWindow, 0);
 
-      if (flags & MUTT_PAGER_RETWINCH)
+      if (view->flags & MUTT_PAGER_RETWINCH)
       {
         /* Store current position. */
         rd.lines = -1;
@@ -2624,7 +2700,12 @@ int mutt_pager(const char *banner, const char *fname, PagerFlags flags, struct P
       continue;
     }
 
+    // FIXME: severe badness
+    // Sometimes a non-printable char that represents a code of the needed
+    // operation is read here, as if user pressed it. It looks like something
+    // inserts those chars into input stream
     ch = km_dokey(MENU_PAGER);
+
     if (ch >= 0)
     {
       mutt_clear_error();
@@ -2685,7 +2766,7 @@ int mutt_pager(const char *banner, const char *fname, PagerFlags flags, struct P
         }
         else
         {
-          rd.topline = up_n_lines(rd.extra->win_pager->state.rows - c_pager_context,
+          rd.topline = up_n_lines(rd.view->win_pager->state.rows - c_pager_context,
                                   rd.line_info, rd.topline, rd.hide_quoted);
         }
         break;
@@ -2724,8 +2805,8 @@ int mutt_pager(const char *banner, const char *fname, PagerFlags flags, struct P
       case OP_HALF_UP:
         if (rd.topline)
         {
-          rd.topline = up_n_lines(rd.extra->win_pager->state.rows / 2 +
-                                      (rd.extra->win_pager->state.rows % 2),
+          rd.topline = up_n_lines(rd.view->win_pager->state.rows / 2 +
+                                      (rd.view->win_pager->state.rows % 2),
                                   rd.line_info, rd.topline, rd.hide_quoted);
         }
         else
@@ -2735,7 +2816,7 @@ int mutt_pager(const char *banner, const char *fname, PagerFlags flags, struct P
       case OP_HALF_DOWN:
         if (rd.line_info[rd.curline].offset < (rd.sb.st_size - 1))
         {
-          rd.topline = up_n_lines(rd.extra->win_pager->state.rows / 2,
+          rd.topline = up_n_lines(rd.view->win_pager->state.rows / 2,
                                   rd.line_info, rd.curline, rd.hide_quoted);
         }
         else if (c_pager_stop)
@@ -2757,7 +2838,7 @@ int mutt_pager(const char *banner, const char *fname, PagerFlags flags, struct P
         {
           wrapped = false;
 
-          if (c_search_context < rd.extra->win_pager->state.rows)
+          if (c_search_context < rd.view->win_pager->state.rows)
             searchctx = c_search_context;
           else
             searchctx = 0;
@@ -2901,9 +2982,9 @@ int mutt_pager(const char *banner, const char *fname, PagerFlags flags, struct P
           int line_num = 0;
           while (display_line(rd.fp, &rd.last_pos, &rd.line_info, line_num,
                               &rd.last_line, &rd.max_line,
-                              MUTT_SEARCH | (flags & MUTT_PAGER_NSKIP) | (flags & MUTT_PAGER_NOWRAP),
+                              MUTT_SEARCH | (view->flags & MUTT_PAGER_NSKIP) | (view->flags & MUTT_PAGER_NOWRAP),
                               &rd.quote_list, &rd.q_level, &rd.force_redraw,
-                              &rd.search_re, rd.extra->win_pager) == 0)
+                              &rd.search_re, rd.view->win_pager) == 0)
           {
             line_num++;
           }
@@ -2950,7 +3031,7 @@ int mutt_pager(const char *banner, const char *fname, PagerFlags flags, struct P
           {
             rd.search_flag = MUTT_SEARCH;
             /* give some context for search results */
-            if (c_search_context < rd.extra->win_pager->state.rows)
+            if (c_search_context < rd.view->win_pager->state.rows)
               searchctx = c_search_context;
             else
               searchctx = 0;
@@ -2971,7 +3052,7 @@ int mutt_pager(const char *banner, const char *fname, PagerFlags flags, struct P
 
       case OP_SORT:
       case OP_SORT_REVERSE:
-        if (!assert_pager_mode(IsEmail(extra)))
+        if (!assert_pager_mode(view->mode == PAGER_MODE_EMAIL))
           break;
         if (mutt_select_sort((ch == OP_SORT_REVERSE)) == 0)
         {
@@ -3020,9 +3101,9 @@ int mutt_pager(const char *banner, const char *fname, PagerFlags flags, struct P
           while (((new_topline < rd.last_line) ||
                   (0 == (dretval = display_line(
                              rd.fp, &rd.last_pos, &rd.line_info, new_topline, &rd.last_line,
-                             &rd.max_line, MUTT_TYPES | (flags & MUTT_PAGER_NOWRAP),
+                             &rd.max_line, MUTT_TYPES | (view->flags & MUTT_PAGER_NOWRAP),
                              &rd.quote_list, &rd.q_level, &rd.force_redraw,
-                             &rd.search_re, rd.extra->win_pager)))) &&
+                             &rd.search_re, rd.view->win_pager)))) &&
                  IS_HEADER(rd.line_info[new_topline].type))
           {
             new_topline++;
@@ -3034,9 +3115,9 @@ int mutt_pager(const char *banner, const char *fname, PagerFlags flags, struct P
         while ((((new_topline + c_skip_quoted_offset) < rd.last_line) ||
                 (0 == (dretval = display_line(
                            rd.fp, &rd.last_pos, &rd.line_info, new_topline, &rd.last_line,
-                           &rd.max_line, MUTT_TYPES | (flags & MUTT_PAGER_NOWRAP),
+                           &rd.max_line, MUTT_TYPES | (view->flags & MUTT_PAGER_NOWRAP),
                            &rd.quote_list, &rd.q_level, &rd.force_redraw,
-                           &rd.search_re, rd.extra->win_pager)))) &&
+                           &rd.search_re, rd.view->win_pager)))) &&
                (rd.line_info[new_topline + c_skip_quoted_offset].type != MT_COLOR_QUOTED))
         {
           new_topline++;
@@ -3051,9 +3132,9 @@ int mutt_pager(const char *banner, const char *fname, PagerFlags flags, struct P
         while ((((new_topline + c_skip_quoted_offset) < rd.last_line) ||
                 (0 == (dretval = display_line(
                            rd.fp, &rd.last_pos, &rd.line_info, new_topline, &rd.last_line,
-                           &rd.max_line, MUTT_TYPES | (flags & MUTT_PAGER_NOWRAP),
+                           &rd.max_line, MUTT_TYPES | (view->flags & MUTT_PAGER_NOWRAP),
                            &rd.quote_list, &rd.q_level, &rd.force_redraw,
-                           &rd.search_re, rd.extra->win_pager)))) &&
+                           &rd.search_re, rd.view->win_pager)))) &&
                (rd.line_info[new_topline + c_skip_quoted_offset].type == MT_COLOR_QUOTED))
         {
           new_topline++;
@@ -3087,9 +3168,9 @@ int mutt_pager(const char *banner, const char *fname, PagerFlags flags, struct P
         while (((new_topline < rd.last_line) ||
                 (0 == (dretval = display_line(
                            rd.fp, &rd.last_pos, &rd.line_info, new_topline, &rd.last_line,
-                           &rd.max_line, MUTT_TYPES | (flags & MUTT_PAGER_NOWRAP),
+                           &rd.max_line, MUTT_TYPES | (view->flags & MUTT_PAGER_NOWRAP),
                            &rd.quote_list, &rd.q_level, &rd.force_redraw,
-                           &rd.search_re, rd.extra->win_pager)))) &&
+                           &rd.search_re, rd.view->win_pager)))) &&
                IS_HEADER(rd.line_info[new_topline].type))
         {
           new_topline++;
@@ -3114,13 +3195,13 @@ int mutt_pager(const char *banner, const char *fname, PagerFlags flags, struct P
           int line_num = rd.curline;
           /* make sure the types are defined to the end of file */
           while (display_line(rd.fp, &rd.last_pos, &rd.line_info, line_num, &rd.last_line,
-                              &rd.max_line, rd.has_types | (flags & MUTT_PAGER_NOWRAP),
+                              &rd.max_line, rd.has_types | (view->flags & MUTT_PAGER_NOWRAP),
                               &rd.quote_list, &rd.q_level, &rd.force_redraw,
-                              &rd.search_re, rd.extra->win_pager) == 0)
+                              &rd.search_re, rd.view->win_pager) == 0)
           {
             line_num++;
           }
-          rd.topline = up_n_lines(rd.extra->win_pager->state.rows, rd.line_info,
+          rd.topline = up_n_lines(rd.view->win_pager->state.rows, rd.line_info,
                                   rd.last_line, rd.hide_quoted);
         }
         else
@@ -3143,16 +3224,16 @@ int mutt_pager(const char *banner, const char *fname, PagerFlags flags, struct P
 
       case OP_BOUNCE_MESSAGE:
       {
-        if (!assert_pager_mode(IsEmail(extra) || IsMsgAttach(extra)))
+        if (!assert_pager_mode(view->mode == PAGER_MODE_EMAIL || view->mode == PAGER_MODE_ATTACH_E))
           break;
         if (assert_attach_msg_mode(OptAttachMsg))
           break;
-        if (IsMsgAttach(extra))
-          mutt_attach_bounce(m, extra->fp, extra->actx, extra->body);
+        if (view->mode == PAGER_MODE_ATTACH_E)
+          mutt_attach_bounce(m, view->data->fp, view->data->actx, view->data->body);
         else
         {
           struct EmailList el = STAILQ_HEAD_INITIALIZER(el);
-          emaillist_add_email(&el, extra->email);
+          emaillist_add_email(&el, view->data->email);
           ci_bounce_message(m, &el);
           emaillist_clear(&el);
         }
@@ -3160,40 +3241,44 @@ int mutt_pager(const char *banner, const char *fname, PagerFlags flags, struct P
       }
 
       case OP_RESEND:
-        if (!assert_pager_mode(IsEmail(extra) || IsMsgAttach(extra)))
+        if (!assert_pager_mode(view->mode == PAGER_MODE_EMAIL || view->mode == PAGER_MODE_ATTACH_E))
           break;
         if (assert_attach_msg_mode(OptAttachMsg))
           break;
-        if (IsMsgAttach(extra))
-          mutt_attach_resend(extra->fp, extra->ctx, extra->actx, extra->body);
+        if (view->mode == PAGER_MODE_ATTACH_E)
+          // TODO refactor mutt_attach_resend
+          mutt_attach_resend(view->data->fp, view->data->ctx, view->data->actx, view->data->body);
         else
-          mutt_resend_message(NULL, extra->ctx, extra->email, NeoMutt->sub);
+          // TODO refactor mutt_resend_message
+          mutt_resend_message(NULL, view->data->ctx, view->data->email, NeoMutt->sub);
         pager_menu->redraw = REDRAW_FULL;
         break;
 
       case OP_COMPOSE_TO_SENDER:
-        if (!assert_pager_mode(IsEmail(extra) || IsMsgAttach(extra)))
+        if (!assert_pager_mode(view->mode == PAGER_MODE_EMAIL || view->mode == PAGER_MODE_ATTACH_E))
           break;
         if (assert_attach_msg_mode(OptAttachMsg))
           break;
-        if (IsMsgAttach(extra))
-          mutt_attach_mail_sender(extra->fp, extra->email, extra->actx, extra->body);
+        if (view->mode == PAGER_MODE_ATTACH_E)
+          mutt_attach_mail_sender(view->data->fp, view->data->email, view->data->actx, view->data->body);
         else
         {
           struct EmailList el = STAILQ_HEAD_INITIALIZER(el);
-          emaillist_add_email(&el, extra->email);
-          mutt_send_message(SEND_TO_SENDER, NULL, NULL, extra->ctx, &el, NeoMutt->sub);
+          emaillist_add_email(&el, view->data->email);
+
+          // TODO refactor mutt_send_message
+          mutt_send_message(SEND_TO_SENDER, NULL, NULL, view->data->ctx, &el, NeoMutt->sub);
           emaillist_clear(&el);
         }
         pager_menu->redraw = REDRAW_FULL;
         break;
 
       case OP_CHECK_TRADITIONAL:
-        if (!assert_pager_mode(IsEmail(extra)))
+        if (!assert_pager_mode(view->mode == PAGER_MODE_EMAIL))
           break;
         if (!(WithCrypto & APPLICATION_PGP))
           break;
-        if (!(extra->email->security & PGP_TRADITIONAL_CHECKED))
+        if (!(view->data->email->security & PGP_TRADITIONAL_CHECKED))
         {
           ch = -1;
           rc = OP_CHECK_TRADITIONAL;
@@ -3201,20 +3286,20 @@ int mutt_pager(const char *banner, const char *fname, PagerFlags flags, struct P
         break;
 
       case OP_CREATE_ALIAS:
-        if (!assert_pager_mode(IsEmail(extra) || IsMsgAttach(extra)))
+        if (!assert_pager_mode(view->mode == PAGER_MODE_EMAIL || view->mode == PAGER_MODE_ATTACH_E))
           break;
         struct AddressList *al = NULL;
-        if (IsMsgAttach(extra))
-          al = mutt_get_address(extra->body->email->env, NULL);
+        if (view->mode == PAGER_MODE_ATTACH_E)
+          al = mutt_get_address(view->data->body->email->env, NULL);
         else
-          al = mutt_get_address(extra->email->env, NULL);
+          al = mutt_get_address(view->data->email->env, NULL);
         alias_create(al, NeoMutt->sub);
         break;
 
       case OP_PURGE_MESSAGE:
       case OP_DELETE:
       {
-        if (!assert_pager_mode(IsEmail(extra)))
+        if (!assert_pager_mode(view->mode == PAGER_MODE_EMAIL))
           break;
         if (!assert_mailbox_writable(m))
           break;
@@ -3224,12 +3309,12 @@ int mutt_pager(const char *banner, const char *fname, PagerFlags flags, struct P
           break;
         }
 
-        mutt_set_flag(m, extra->email, MUTT_DELETE, true);
-        mutt_set_flag(m, extra->email, MUTT_PURGE, (ch == OP_PURGE_MESSAGE));
+        mutt_set_flag(m, view->data->email, MUTT_DELETE, true);
+        mutt_set_flag(m, view->data->email, MUTT_PURGE, (ch == OP_PURGE_MESSAGE));
         const bool c_delete_untag =
             cs_subset_bool(NeoMutt->sub, "delete_untag");
         if (c_delete_untag)
-          mutt_set_flag(m, extra->email, MUTT_TAG, false);
+          mutt_set_flag(m, view->data->email, MUTT_TAG, false);
         pager_menu->redraw |= REDRAW_STATUS | REDRAW_INDEX;
         const bool c_resolve = cs_subset_bool(NeoMutt->sub, "resolve");
         if (c_resolve)
@@ -3243,18 +3328,18 @@ int mutt_pager(const char *banner, const char *fname, PagerFlags flags, struct P
       case OP_MAIN_SET_FLAG:
       case OP_MAIN_CLEAR_FLAG:
       {
-        if (!assert_pager_mode(IsEmail(extra)))
+        if (!assert_pager_mode(view->mode == PAGER_MODE_EMAIL))
           break;
         if (!assert_mailbox_writable(m))
           break;
 
         struct EmailList el = STAILQ_HEAD_INITIALIZER(el);
-        emaillist_add_email(&el, extra->email);
+        emaillist_add_email(&el, view->data->email);
 
         if (mutt_change_flag(m, &el, (ch == OP_MAIN_SET_FLAG)) == 0)
           pager_menu->redraw |= REDRAW_STATUS | REDRAW_INDEX;
         const bool c_resolve = cs_subset_bool(NeoMutt->sub, "resolve");
-        if (extra->email->deleted && c_resolve)
+        if (view->data->email->deleted && c_resolve)
         {
           ch = -1;
           rc = OP_MAIN_NEXT_UNDELETED;
@@ -3267,7 +3352,7 @@ int mutt_pager(const char *banner, const char *fname, PagerFlags flags, struct P
       case OP_DELETE_SUBTHREAD:
       case OP_PURGE_THREAD:
       {
-        if (!assert_pager_mode(IsEmail(extra)))
+        if (!assert_pager_mode(view->mode == PAGER_MODE_EMAIL))
           break;
         if (!assert_mailbox_writable(m))
           break;
@@ -3281,12 +3366,12 @@ int mutt_pager(const char *banner, const char *fname, PagerFlags flags, struct P
         }
 
         int subthread = (ch == OP_DELETE_SUBTHREAD);
-        int r = mutt_thread_set_flag(m, extra->email, MUTT_DELETE, 1, subthread);
+        int r = mutt_thread_set_flag(m, view->data->email, MUTT_DELETE, 1, subthread);
         if (r == -1)
           break;
         if (ch == OP_PURGE_THREAD)
         {
-          r = mutt_thread_set_flag(m, extra->email, MUTT_PURGE, true, subthread);
+          r = mutt_thread_set_flag(m, view->data->email, MUTT_PURGE, true, subthread);
           if (r == -1)
             break;
         }
@@ -3294,7 +3379,7 @@ int mutt_pager(const char *banner, const char *fname, PagerFlags flags, struct P
         const bool c_delete_untag =
             cs_subset_bool(NeoMutt->sub, "delete_untag");
         if (c_delete_untag)
-          mutt_thread_set_flag(m, extra->email, MUTT_TAG, 0, subthread);
+          mutt_thread_set_flag(m, view->data->email, MUTT_TAG, 0, subthread);
         const bool c_resolve = cs_subset_bool(NeoMutt->sub, "resolve");
         if (c_resolve)
         {
@@ -3311,25 +3396,25 @@ int mutt_pager(const char *banner, const char *fname, PagerFlags flags, struct P
       }
 
       case OP_DISPLAY_ADDRESS:
-        if (!assert_pager_mode(IsEmail(extra) || IsMsgAttach(extra)))
+        if (!assert_pager_mode(view->mode == PAGER_MODE_EMAIL || view->mode == PAGER_MODE_ATTACH_E))
           break;
-        if (IsMsgAttach(extra))
-          mutt_display_address(extra->body->email->env);
+        if (view->mode == PAGER_MODE_ATTACH_E)
+          mutt_display_address(view->data->body->email->env);
         else
-          mutt_display_address(extra->email->env);
+          mutt_display_address(view->data->email->env);
         break;
 
       case OP_ENTER_COMMAND:
         old_PagerIndexLines = c_pager_index_lines;
 
         mutt_enter_command();
-        window_set_focus(rd.extra->win_pager);
+        window_set_focus(rd.view->win_pager);
         pager_menu->redraw = REDRAW_FULL;
 
         if (OptNeedResort)
         {
           OptNeedResort = false;
-          if (!assert_pager_mode(IsEmail(extra)))
+          if (!assert_pager_mode(view->mode == PAGER_MODE_EMAIL))
             break;
           OptNeedResort = true;
         }
@@ -3339,7 +3424,7 @@ int mutt_pager(const char *banner, const char *fname, PagerFlags flags, struct P
           mutt_menu_free(&rd.menu);
         }
 
-        if ((pager_menu->redraw & REDRAW_FLOW) && (flags & MUTT_PAGER_RETWINCH))
+        if ((pager_menu->redraw & REDRAW_FLOW) && (view->flags & MUTT_PAGER_RETWINCH))
         {
           ch = -1;
           rc = OP_REFORMAT_WINCH;
@@ -3351,7 +3436,7 @@ int mutt_pager(const char *banner, const char *fname, PagerFlags flags, struct P
 
       case OP_FLAG_MESSAGE:
       {
-        if (!assert_pager_mode(IsEmail(extra)))
+        if (!assert_pager_mode(view->mode == PAGER_MODE_EMAIL))
           break;
         if (!assert_mailbox_writable(m))
           break;
@@ -3359,7 +3444,7 @@ int mutt_pager(const char *banner, const char *fname, PagerFlags flags, struct P
         if (!assert_mailbox_permissions(m, MUTT_ACL_WRITE, "Can't flag message"))
           break;
 
-        mutt_set_flag(m, extra->email, MUTT_FLAG, !extra->email->flagged);
+        mutt_set_flag(m, view->data->email, MUTT_FLAG, !view->data->email->flagged);
         pager_menu->redraw |= REDRAW_STATUS | REDRAW_INDEX;
         const bool c_resolve = cs_subset_bool(NeoMutt->sub, "resolve");
         if (c_resolve)
@@ -3371,81 +3456,90 @@ int mutt_pager(const char *banner, const char *fname, PagerFlags flags, struct P
       }
 
       case OP_PIPE:
-        if (!assert_pager_mode(IsEmail(extra) || IsAttach(extra)))
+        if (!assert_pager_mode(view->mode == PAGER_MODE_EMAIL || view->mode == PAGER_MODE_ATTACH))
           break;
-        if (IsAttach(extra))
-          mutt_pipe_attachment_list(extra->actx, extra->fp, false, extra->body, false);
+        if (view->mode == PAGER_MODE_ATTACH)
+          mutt_pipe_attachment_list(view->data->actx, view->data->fp, false, view->data->body, false);
         else
         {
           struct EmailList el = STAILQ_HEAD_INITIALIZER(el);
-          el_add_tagged(&el, extra->ctx, extra->email, false);
-          mutt_pipe_message(extra->ctx->mailbox, &el);
+          //TODO refacotr el_add_tagged
+          el_add_tagged(&el, view->data->ctx, view->data->email, false);
+          mutt_pipe_message(m, &el);
           emaillist_clear(&el);
         }
         break;
 
       case OP_PRINT:
-        if (!assert_pager_mode(IsEmail(extra) || IsAttach(extra)))
+        if (!assert_pager_mode(view->mode == PAGER_MODE_EMAIL || view->mode == PAGER_MODE_ATTACH))
           break;
-        if (IsAttach(extra))
-          mutt_print_attachment_list(extra->actx, extra->fp, false, extra->body);
+        if (view->mode == PAGER_MODE_ATTACH)
+          mutt_print_attachment_list(view->data->actx, view->data->fp, false, view->data->body);
         else
         {
           struct EmailList el = STAILQ_HEAD_INITIALIZER(el);
-          el_add_tagged(&el, extra->ctx, extra->email, false);
-          mutt_print_message(extra->ctx->mailbox, &el);
+          //TODO refacotr el_add_tagged
+          el_add_tagged(&el, view->data->ctx, view->data->email, false);
+          mutt_print_message(m, &el);
           emaillist_clear(&el);
         }
         break;
 
       case OP_MAIL:
-        if (!assert_pager_mode(IsEmail(extra)))
+        if (!assert_pager_mode(view->mode == PAGER_MODE_EMAIL))
           break;
         if (assert_attach_msg_mode(OptAttachMsg))
           break;
-        mutt_send_message(SEND_NO_FLAGS, NULL, NULL, extra->ctx, NULL, NeoMutt->sub);
+
+        // TODO refactor mutt_send_message
+        mutt_send_message(SEND_NO_FLAGS, NULL, NULL, view->data->ctx, NULL, NeoMutt->sub);
         pager_menu->redraw = REDRAW_FULL;
         break;
 
 #ifdef USE_NNTP
       case OP_POST:
       {
-        if (!assert_pager_mode(IsEmail(extra)))
+        if (!assert_pager_mode(view->mode == PAGER_MODE_EMAIL))
           break;
         if (assert_attach_msg_mode(OptAttachMsg))
           break;
         const enum QuadOption c_post_moderated =
             cs_subset_quad(NeoMutt->sub, "post_moderated");
-        if (extra->ctx && (extra->ctx->mailbox->type == MUTT_NNTP) &&
-            !((struct NntpMboxData *) extra->ctx->mailbox->mdata)->allowed && (query_quadoption(c_post_moderated, _("Posting to this group not allowed, may be moderated. Continue?")) != MUTT_YES))
+        if ((m->type == MUTT_NNTP)
+             && !((struct NntpMboxData *) m->mdata)->allowed
+             && (query_quadoption(c_post_moderated, _("Posting to this group not allowed, may be moderated. Continue?")) != MUTT_YES))
         {
           break;
         }
-        mutt_send_message(SEND_NEWS, NULL, NULL, extra->ctx, NULL, NeoMutt->sub);
+
+        // TODO refactor mutt_send_message
+        mutt_send_message(SEND_NEWS, NULL, NULL, view->data->ctx, NULL, NeoMutt->sub);
         pager_menu->redraw = REDRAW_FULL;
         break;
       }
 
       case OP_FORWARD_TO_GROUP:
       {
-        if (!assert_pager_mode(IsEmail(extra) || IsMsgAttach(extra)))
+        if (!assert_pager_mode(view->mode == PAGER_MODE_EMAIL || view->mode == PAGER_MODE_ATTACH_E))
           break;
         if (assert_attach_msg_mode(OptAttachMsg))
           break;
         const enum QuadOption c_post_moderated =
             cs_subset_quad(NeoMutt->sub, "post_moderated");
-        if (extra->ctx && (extra->ctx->mailbox->type == MUTT_NNTP) &&
-            !((struct NntpMboxData *) extra->ctx->mailbox->mdata)->allowed && (query_quadoption(c_post_moderated, _("Posting to this group not allowed, may be moderated. Continue?")) != MUTT_YES))
+        if ((m->type == MUTT_NNTP)
+            && !((struct NntpMboxData *) m->mdata)->allowed
+            && (query_quadoption(c_post_moderated, _("Posting to this group not allowed, may be moderated. Continue?")) != MUTT_YES))
         {
           break;
         }
-        if (IsMsgAttach(extra))
-          mutt_attach_forward(extra->fp, m, extra->email, extra->actx, extra->body, SEND_NEWS);
+        if (view->mode == PAGER_MODE_ATTACH_E)
+          mutt_attach_forward(view->data->fp, m, view->data->email, view->data->actx, view->data->body, SEND_NEWS);
         else
         {
           struct EmailList el = STAILQ_HEAD_INITIALIZER(el);
-          emaillist_add_email(&el, extra->email);
-          mutt_send_message(SEND_NEWS | SEND_FORWARD, NULL, NULL, extra->ctx,
+          emaillist_add_email(&el, view->data->email);
+          // TODO refactor mutt_send_message
+          mutt_send_message(SEND_NEWS | SEND_FORWARD, NULL, NULL, view->data->ctx,
                             &el, NeoMutt->sub);
           emaillist_clear(&el);
         }
@@ -3454,15 +3548,15 @@ int mutt_pager(const char *banner, const char *fname, PagerFlags flags, struct P
       }
 
       case OP_FOLLOWUP:
-        if (!assert_pager_mode(IsEmail(extra) || IsMsgAttach(extra)))
+        if (!assert_pager_mode(view->mode == PAGER_MODE_EMAIL || view->mode == PAGER_MODE_ATTACH_E))
           break;
         if (assert_attach_msg_mode(OptAttachMsg))
           break;
 
-        if (IsMsgAttach(extra))
-          followup_to = extra->body->email->env->followup_to;
+        if (view->mode == PAGER_MODE_ATTACH_E)
+          followup_to = view->data->body->email->env->followup_to;
         else
-          followup_to = extra->email->env->followup_to;
+          followup_to = view->data->email->env->followup_to;
 
         const enum QuadOption c_followup_to_poster =
             cs_subset_quad(NeoMutt->sub, "followup_to_poster");
@@ -3472,21 +3566,23 @@ int mutt_pager(const char *banner, const char *fname, PagerFlags flags, struct P
         {
           const enum QuadOption c_post_moderated =
               cs_subset_quad(NeoMutt->sub, "post_moderated");
-          if (extra->ctx && (extra->ctx->mailbox->type == MUTT_NNTP) &&
-              !((struct NntpMboxData *) extra->ctx->mailbox->mdata)->allowed && (query_quadoption(c_post_moderated, _("Posting to this group not allowed, may be moderated. Continue?")) != MUTT_YES))
+          if ((m->type == MUTT_NNTP)
+              && !((struct NntpMboxData *) m->mdata)->allowed
+              && (query_quadoption(c_post_moderated, _("Posting to this group not allowed, may be moderated. Continue?")) != MUTT_YES))
           {
             break;
           }
-          if (IsMsgAttach(extra))
+        if (view->mode == PAGER_MODE_ATTACH_E)
           {
-            mutt_attach_reply(extra->fp, m, extra->email, extra->actx,
-                              extra->body, SEND_NEWS | SEND_REPLY);
+            mutt_attach_reply(view->data->fp, m, view->data->email, view->data->actx,
+                              view->data->body, SEND_NEWS | SEND_REPLY);
           }
           else
           {
             struct EmailList el = STAILQ_HEAD_INITIALIZER(el);
-            emaillist_add_email(&el, extra->email);
-            mutt_send_message(SEND_NEWS | SEND_REPLY, NULL, NULL, extra->ctx,
+            emaillist_add_email(&el, view->data->email);
+            // TODO refactor mutt_send_message
+            mutt_send_message(SEND_NEWS | SEND_REPLY, NULL, NULL, view->data->ctx,
                               &el, NeoMutt->sub);
             emaillist_clear(&el);
           }
@@ -3500,7 +3596,7 @@ int mutt_pager(const char *banner, const char *fname, PagerFlags flags, struct P
       case OP_GROUP_CHAT_REPLY:
       case OP_LIST_REPLY:
       {
-        if (!assert_pager_mode(IsEmail(extra) || IsMsgAttach(extra)))
+        if (!assert_pager_mode(view->mode == PAGER_MODE_EMAIL || view->mode == PAGER_MODE_ATTACH_E))
           break;
         if (assert_attach_msg_mode(OptAttachMsg))
           break;
@@ -3513,13 +3609,14 @@ int mutt_pager(const char *banner, const char *fname, PagerFlags flags, struct P
         else if (ch == OP_LIST_REPLY)
           replyflags |= SEND_LIST_REPLY;
 
-        if (IsMsgAttach(extra))
-          mutt_attach_reply(extra->fp, m, extra->email, extra->actx, extra->body, replyflags);
+        if (view->mode == PAGER_MODE_ATTACH_E)
+          mutt_attach_reply(view->data->fp, m, view->data->email, view->data->actx, view->data->body, replyflags);
         else
         {
           struct EmailList el = STAILQ_HEAD_INITIALIZER(el);
-          emaillist_add_email(&el, extra->email);
-          mutt_send_message(replyflags, NULL, NULL, extra->ctx, &el, NeoMutt->sub);
+          emaillist_add_email(&el, view->data->email);
+          // TODO refactor mutt_send_message
+          mutt_send_message(replyflags, NULL, NULL, view->data->ctx, &el, NeoMutt->sub);
           emaillist_clear(&el);
         }
         pager_menu->redraw = REDRAW_FULL;
@@ -3528,31 +3625,35 @@ int mutt_pager(const char *banner, const char *fname, PagerFlags flags, struct P
 
       case OP_RECALL_MESSAGE:
       {
-        if (!assert_pager_mode(IsEmail(extra)))
+        if (!assert_pager_mode(view->mode == PAGER_MODE_EMAIL))
           break;
         if (assert_attach_msg_mode(OptAttachMsg))
           break;
         struct EmailList el = STAILQ_HEAD_INITIALIZER(el);
-        emaillist_add_email(&el, extra->email);
-        mutt_send_message(SEND_POSTPONED, NULL, NULL, extra->ctx, &el, NeoMutt->sub);
+        emaillist_add_email(&el, view->data->email);
+
+        // TODO refactor mutt_send_message
+        mutt_send_message(SEND_POSTPONED, NULL, NULL, view->data->ctx, &el, NeoMutt->sub);
         emaillist_clear(&el);
         pager_menu->redraw = REDRAW_FULL;
         break;
       }
 
       case OP_FORWARD_MESSAGE:
-        if (!assert_pager_mode(IsEmail(extra) || IsMsgAttach(extra)))
+        if (!assert_pager_mode(view->mode == PAGER_MODE_EMAIL || view->mode == PAGER_MODE_ATTACH_E))
           break;
         if (assert_attach_msg_mode(OptAttachMsg))
           break;
-        if (IsMsgAttach(extra))
-          mutt_attach_forward(extra->fp, m, extra->email, extra->actx,
-                              extra->body, SEND_NO_FLAGS);
+        if (view->mode == PAGER_MODE_ATTACH_E)
+          mutt_attach_forward(view->data->fp, m, view->data->email, view->data->actx,
+                              view->data->body, SEND_NO_FLAGS);
         else
         {
           struct EmailList el = STAILQ_HEAD_INITIALIZER(el);
-          emaillist_add_email(&el, extra->email);
-          mutt_send_message(SEND_FORWARD, NULL, NULL, extra->ctx, &el, NeoMutt->sub);
+          emaillist_add_email(&el, view->data->email);
+
+          // TODO refactor mutt_send_message
+          mutt_send_message(SEND_FORWARD, NULL, NULL, view->data->ctx, &el, NeoMutt->sub);
           emaillist_clear(&el);
         }
         pager_menu->redraw = REDRAW_FULL;
@@ -3566,10 +3667,10 @@ int mutt_pager(const char *banner, const char *fname, PagerFlags flags, struct P
         }
       /* fallthrough */
       case OP_SAVE:
-        if (IsAttach(extra))
+        if (view->mode == PAGER_MODE_ATTACH)
         {
-          mutt_save_attachment_list(extra->actx, extra->fp, false, extra->body,
-                                    extra->email, NULL);
+          mutt_save_attachment_list(view->data->actx, view->data->fp, false, view->data->body,
+                                    view->data->email, NULL);
           break;
         }
       /* fallthrough */
@@ -3583,10 +3684,10 @@ int mutt_pager(const char *banner, const char *fname, PagerFlags flags, struct P
           ch = -1;
           break;
         }
-        if (!assert_pager_mode(IsEmail(extra)))
+        if (!assert_pager_mode(view->mode == PAGER_MODE_EMAIL))
           break;
         struct EmailList el = STAILQ_HEAD_INITIALIZER(el);
-        emaillist_add_email(&el, extra->email);
+        emaillist_add_email(&el, view->data->email);
 
         const enum MessageSaveOpt save_opt =
             ((ch == OP_SAVE) || (ch == OP_DECODE_SAVE) || (ch == OP_DECRYPT_SAVE)) ?
@@ -3623,9 +3724,9 @@ int mutt_pager(const char *banner, const char *fname, PagerFlags flags, struct P
 
       case OP_TAG:
       {
-        if (!assert_pager_mode(IsEmail(extra)))
+        if (!assert_pager_mode(view->mode == PAGER_MODE_EMAIL))
           break;
-        mutt_set_flag(m, extra->email, MUTT_TAG, !extra->email->tagged);
+        mutt_set_flag(m, view->data->email, MUTT_TAG, !view->data->email->tagged);
 
         pager_menu->redraw |= REDRAW_STATUS | REDRAW_INDEX;
         const bool c_resolve = cs_subset_bool(NeoMutt->sub, "resolve");
@@ -3639,7 +3740,7 @@ int mutt_pager(const char *banner, const char *fname, PagerFlags flags, struct P
 
       case OP_TOGGLE_NEW:
       {
-        if (!assert_pager_mode(IsEmail(extra)))
+        if (!assert_pager_mode(view->mode == PAGER_MODE_EMAIL))
           break;
         if (!assert_mailbox_writable(m))
           break;
@@ -3647,13 +3748,12 @@ int mutt_pager(const char *banner, const char *fname, PagerFlags flags, struct P
         if (!assert_mailbox_permissions(m, MUTT_ACL_SEEN, _("Can't toggle new")))
           break;
 
-        if (extra->email->read || extra->email->old)
-          mutt_set_flag(m, extra->email, MUTT_NEW, true);
+        if (view->data->email->read || view->data->email->old)
+          mutt_set_flag(m, view->data->email, MUTT_NEW, true);
         else if (!first)
-          mutt_set_flag(m, extra->email, MUTT_READ, true);
+          mutt_set_flag(m, view->data->email, MUTT_READ, true);
         first = false;
-        if (extra->ctx)
-          extra->ctx->msg_in_pager = -1;
+        view->data->ctx->msg_in_pager = -1;
         pager_menu->redraw |= REDRAW_STATUS | REDRAW_INDEX;
         const bool c_resolve = cs_subset_bool(NeoMutt->sub, "resolve");
         if (c_resolve)
@@ -3666,7 +3766,7 @@ int mutt_pager(const char *banner, const char *fname, PagerFlags flags, struct P
 
       case OP_UNDELETE:
       {
-        if (!assert_pager_mode(IsEmail(extra)))
+        if (!assert_pager_mode(view->mode == PAGER_MODE_EMAIL))
           break;
         if (!assert_mailbox_writable(m))
           break;
@@ -3676,8 +3776,8 @@ int mutt_pager(const char *banner, const char *fname, PagerFlags flags, struct P
           break;
         }
 
-        mutt_set_flag(m, extra->email, MUTT_DELETE, false);
-        mutt_set_flag(m, extra->email, MUTT_PURGE, false);
+        mutt_set_flag(m, view->data->email, MUTT_DELETE, false);
+        mutt_set_flag(m, view->data->email, MUTT_PURGE, false);
         pager_menu->redraw |= REDRAW_STATUS | REDRAW_INDEX;
         const bool c_resolve = cs_subset_bool(NeoMutt->sub, "resolve");
         if (c_resolve)
@@ -3691,7 +3791,7 @@ int mutt_pager(const char *banner, const char *fname, PagerFlags flags, struct P
       case OP_UNDELETE_THREAD:
       case OP_UNDELETE_SUBTHREAD:
       {
-        if (!assert_pager_mode(IsEmail(extra)))
+        if (!assert_pager_mode(view->mode == PAGER_MODE_EMAIL))
           break;
         if (!assert_mailbox_writable(m))
           break;
@@ -3704,11 +3804,11 @@ int mutt_pager(const char *banner, const char *fname, PagerFlags flags, struct P
           break;
         }
 
-        int r = mutt_thread_set_flag(m, extra->email, MUTT_DELETE, false,
+        int r = mutt_thread_set_flag(m, view->data->email, MUTT_DELETE, false,
                                      (ch != OP_UNDELETE_THREAD));
         if (r != -1)
         {
-          r = mutt_thread_set_flag(m, extra->email, MUTT_PURGE, false,
+          r = mutt_thread_set_flag(m, view->data->email, MUTT_PURGE, false,
                                    (ch != OP_UNDELETE_THREAD));
         }
         if (r != -1)
@@ -3737,16 +3837,16 @@ int mutt_pager(const char *banner, const char *fname, PagerFlags flags, struct P
         break;
 
       case OP_VIEW_ATTACHMENTS:
-        if (flags & MUTT_PAGER_ATTACHMENT)
+        if (view->flags & MUTT_PAGER_ATTACHMENT)
         {
           ch = -1;
           rc = OP_ATTACH_COLLAPSE;
           break;
         }
-        if (!assert_pager_mode(IsEmail(extra)))
+        if (!assert_pager_mode(view->mode == PAGER_MODE_EMAIL))
           break;
-        dlg_select_attachment(extra->email);
-        if (extra->email->attach_del)
+        dlg_select_attachment(view->data->email);
+        if (view->data->email->attach_del)
           m->changed = true;
         pager_menu->redraw = REDRAW_FULL;
         break;
@@ -3758,13 +3858,15 @@ int mutt_pager(const char *banner, const char *fname, PagerFlags flags, struct P
           ch = -1;
           break;
         }
-        if (!assert_pager_mode(IsEmail(extra)))
+        if (!assert_pager_mode(view->mode == PAGER_MODE_EMAIL))
           break;
         if (assert_attach_msg_mode(OptAttachMsg))
           break;
         struct EmailList el = STAILQ_HEAD_INITIALIZER(el);
-        emaillist_add_email(&el, extra->email);
-        mutt_send_message(SEND_KEY, NULL, NULL, extra->ctx, &el, NeoMutt->sub);
+        emaillist_add_email(&el, view->data->email);
+
+        // TODO refactor mutt_send_message
+        mutt_send_message(SEND_KEY, NULL, NULL, view->data->ctx, &el, NeoMutt->sub);
         emaillist_clear(&el);
         pager_menu->redraw = REDRAW_FULL;
         break;
@@ -3772,11 +3874,11 @@ int mutt_pager(const char *banner, const char *fname, PagerFlags flags, struct P
 
       case OP_EDIT_LABEL:
       {
-        if (!assert_pager_mode(IsEmail(extra)))
+        if (!assert_pager_mode(view->mode == PAGER_MODE_EMAIL))
           break;
 
         struct EmailList el = STAILQ_HEAD_INITIALIZER(el);
-        emaillist_add_email(&el, extra->email);
+        emaillist_add_email(&el, view->data->email);
         rc = mutt_label_message(m, &el);
         emaillist_clear(&el);
 
@@ -3804,10 +3906,10 @@ int mutt_pager(const char *banner, const char *fname, PagerFlags flags, struct P
           ch = -1;
           break;
         }
-        if (!assert_pager_mode(IsEmail(extra)))
+        if (!assert_pager_mode(view->mode == PAGER_MODE_EMAIL))
           break;
         struct EmailList el = STAILQ_HEAD_INITIALIZER(el);
-        emaillist_add_email(&el, extra->email);
+        emaillist_add_email(&el, view->data->email);
         crypt_extract_keys_from_messages(m, &el);
         emaillist_clear(&el);
         pager_menu->redraw = REDRAW_FULL;
@@ -3833,7 +3935,7 @@ int mutt_pager(const char *banner, const char *fname, PagerFlags flags, struct P
       case OP_SIDEBAR_PREV_NEW:
       {
         struct MuttWindow *win_sidebar =
-            mutt_window_find(dialog_find(rd.extra->win_pager), WT_SIDEBAR);
+            mutt_window_find(dialog_find(rd.view->win_pager), WT_SIDEBAR);
         if (!win_sidebar)
           break;
         sb_change_mailbox(win_sidebar, ch);
@@ -3842,7 +3944,7 @@ int mutt_pager(const char *banner, const char *fname, PagerFlags flags, struct P
 
       case OP_SIDEBAR_TOGGLE_VISIBLE:
         bool_str_toggle(NeoMutt->sub, "sidebar_visible", NULL);
-        mutt_window_reflow(dialog_find(rd.extra->win_pager));
+        mutt_window_reflow(dialog_find(rd.view->win_pager));
         break;
 #endif
 
@@ -3853,10 +3955,9 @@ int mutt_pager(const char *banner, const char *fname, PagerFlags flags, struct P
   }
 
   mutt_file_fclose(&rd.fp);
-  if (IsEmail(extra))
+  if (view->mode == PAGER_MODE_EMAIL)
   {
-    if (extra->ctx)
-      extra->ctx->msg_in_pager = -1;
+    view->data->ctx->msg_in_pager = -1;
     switch (rc)
     {
       case -1:
@@ -3864,8 +3965,11 @@ int mutt_pager(const char *banner, const char *fname, PagerFlags flags, struct P
         mutt_clear_pager_position();
         break;
       default:
+        // FIXME: TopLine&OldEmail hack
+        // This happens when pager "delegates" something to index, quitting,
+        // and expects to be re-opened again
         TopLine = rd.topline;
-        OldEmail = extra->email;
+        OldEmail = view->data->email;
         break;
     }
   }
@@ -3888,16 +3992,17 @@ int mutt_pager(const char *banner, const char *fname, PagerFlags flags, struct P
   mutt_menu_free(&pager_menu);
   mutt_menu_free(&rd.menu);
 
-  if (rd.extra->win_index)
+  if (rd.view->win_index)
   {
-    rd.extra->win_index->size = MUTT_WIN_SIZE_MAXIMISE;
-    rd.extra->win_index->req_rows = MUTT_WIN_SIZE_UNLIMITED;
-    rd.extra->win_index->parent->size = MUTT_WIN_SIZE_MAXIMISE;
-    rd.extra->win_index->parent->req_rows = MUTT_WIN_SIZE_UNLIMITED;
-    window_set_visible(rd.extra->win_index->parent, true);
+    rd.view->win_index->size             = MUTT_WIN_SIZE_MAXIMISE;
+    rd.view->win_index->req_rows         = MUTT_WIN_SIZE_UNLIMITED;
+    rd.view->win_index->parent->size     = MUTT_WIN_SIZE_MAXIMISE;
+    rd.view->win_index->parent->req_rows = MUTT_WIN_SIZE_UNLIMITED;
+    window_set_visible(rd.view->win_index->parent, true);
   }
-  window_set_visible(rd.extra->win_pager->parent, false);
-  mutt_window_reflow(dialog_find(rd.extra->win_pager));
+  window_set_visible(rd.view->win_pager->parent, false);
+  mutt_window_reflow(dialog_find(rd.view->win_pager));
 
   return (rc != -1) ? rc : 0;
 }
+// clang-format on
