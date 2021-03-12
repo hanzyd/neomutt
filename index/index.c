@@ -581,6 +581,24 @@ void set_current_email(struct IndexData *idata, struct Email *e)
 
   idata->cur.e = e;
   idata->cur.sequence = e ? e->sequence : 0;
+  //XXX Notify
+}
+
+/**
+ * set_current_email_index - XXX
+ * @param idata Index Data
+ * @param index Index number to use
+ */
+void set_current_email_index(struct IndexData *idata, int index)
+{
+  if (!idata)
+    return;
+
+  struct Menu *menu = idata->menu;
+  struct Email *e = mutt_get_virt_email(idata->mailbox, index);
+
+  menu->current = index;
+  set_current_email(idata, e);
 }
 
 /**
@@ -594,6 +612,19 @@ struct Email *get_current_email(struct IndexData *idata)
     return NULL;
 
   return idata->cur.e;
+}
+
+/**
+ * get_current_email_index - Get the index of the currently selected Email
+ * @param idata Index Data
+ * @retval num Index of current Email
+ */
+int get_current_email_index(struct IndexData *idata)
+{
+  if (!idata)
+    return -1;
+
+  return idata->menu->current;
 }
 
 /**
@@ -1232,6 +1263,7 @@ int mutt_index_menu(struct MuttWindow *dlg)
   menu->mdata = idata;
   mutt_menu_push_current(menu);
   mutt_window_reflow(NULL);
+  idata->menu = menu;
 
   if (!idata->attach_msg)
   {

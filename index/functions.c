@@ -77,6 +77,71 @@
 
 struct MuttWindow *dlg = NULL;
 
+/**
+ * resolve_next - XXX
+ */
+static int resolve_next(struct IndexData *idata)
+{
+  struct Menu *menu = idata->menu;
+  const int index = menu->current;
+
+  const bool c_resolve = cs_subset_bool(idata->sub, "resolve");
+  if (!c_resolve)
+    return index;
+
+  const int new_index = index + 1;
+
+  if (new_index >= idata->mailbox->vcount)
+    return index;
+
+  set_current_email_index(idata, new_index);
+  return new_index;
+}
+
+/**
+ * resolve_thread - XXX
+ */
+static int resolve_thread(struct IndexData *idata, bool subthread)
+{
+  struct Menu *menu = idata->menu;
+  const int index = menu->current;
+
+  const bool c_resolve = cs_subset_bool(idata->sub, "resolve");
+  if (!c_resolve)
+    return index;
+
+  int new_index = -1;
+  struct Email *e = mutt_get_virt_email(idata->mailbox, index);
+
+  if (subthread)
+    new_index = mutt_next_subthread(e);
+  else
+    new_index = mutt_next_thread(e);
+
+  set_current_email_index(idata, new_index);
+  return new_index;
+}
+
+/**
+ * resolve_undeleted - XXX
+ */
+static int resolve_undeleted(struct IndexData *idata)
+{
+  struct Menu *menu = idata->menu;
+  const int index = menu->current;
+
+  const bool c_resolve = cs_subset_bool(idata->sub, "resolve");
+  if (!c_resolve)
+    return index;
+
+  const int new_index = ci_next_undeleted(idata->mailbox, index);
+  if (new_index == -1)
+    return index;
+
+  set_current_email_index(idata, new_index);
+  return new_index;
+}
+
 // -----------------------------------------------------------------------------
 
 /**
@@ -137,7 +202,6 @@ static enum IndexRetval op_compose_to_sender(struct Menu *menu, int op, struct I
   mutt_send_message(SEND_TO_SENDER, NULL, NULL, idata->ctx, &el, idata->sub);
   emaillist_clear(&el);
 
-  menu->redraw = REDRAW_FULL;
   return IR_VOID;
 }
 
@@ -153,7 +217,6 @@ static enum IndexRetval op_create_alias(struct Menu *menu, int op, struct IndexD
     al = mutt_get_address(e->env, NULL);
   alias_create(al, idata->sub);
 
-  menu->redraw |= REDRAW_CURRENT;
   return IR_VOID;
 }
 
@@ -167,7 +230,7 @@ static enum IndexRetval op_delete(struct Menu *menu, int op, struct IndexData *i
     return IR_ERROR;
 
   struct EmailList el = STAILQ_HEAD_INITIALIZER(el);
-  get_tagged_emails(idata, &el);
+  const int count = get_tagged_emails(idata, &el);
 
   mutt_emails_set_flag(idata->mailbox, &el, MUTT_DELETE, true);
   mutt_emails_set_flag(idata->mailbox, &el, MUTT_PURGE, (op == OP_PURGE_MESSAGE));
@@ -176,32 +239,8 @@ static enum IndexRetval op_delete(struct Menu *menu, int op, struct IndexData *i
     mutt_emails_set_flag(idata->mailbox, &el, MUTT_TAG, false);
   emaillist_clear(&el);
 
-  if (idata->tag)
-  {
-    menu->redraw |= REDRAW_INDEX;
-  }
-  else
-  {
-    const bool c_resolve = cs_subset_bool(idata->sub, "resolve");
-    if (c_resolve)
-    {
-      menu->current = ci_next_undeleted(idata->mailbox, menu->current);
-      if (menu->current == -1)
-      {
-        menu->current = menu->oldcurrent;
-        menu->redraw |= REDRAW_CURRENT;
-      }
-      else if (idata->in_pager)
-      {
-        return IR_CONTINUE;
-      }
-      else
-        menu->redraw |= REDRAW_MOTION_RESYNC;
-    }
-    else
-      menu->redraw |= REDRAW_CURRENT;
-  }
-  menu->redraw |= REDRAW_STATUS;
+  if (count == 1)
+    resolve_undeleted(idata);
 
   return IR_VOID;
 }
@@ -235,14 +274,7 @@ static enum IndexRetval op_delete_thread(struct Menu *menu, int op, struct Index
   const bool c_delete_untag = cs_subset_bool(idata->sub, "delete_untag");
   if (c_delete_untag)
     mutt_thread_set_flag(idata->mailbox, e, MUTT_TAG, false, subthread);
-  const bool c_resolve = cs_subset_bool(idata->sub, "resolve");
-  if (c_resolve)
-  {
-    menu->current = ci_next_undeleted(idata->mailbox, menu->current);
-    if (menu->current == -1)
-      menu->current = menu->oldcurrent;
-  }
-  menu->redraw |= REDRAW_INDEX | REDRAW_STATUS;
+  resolve_undeleted(idata);
 
   return IR_SUCCESS;
 }
@@ -334,7 +366,6 @@ static enum IndexRetval op_edit_label(struct Menu *menu, int op, struct IndexDat
   if (num_changed > 0)
   {
     idata->mailbox->changed = true;
-    menu->redraw = REDRAW_FULL;
     /* L10N: This is displayed when the x-label on one or more
        messages is edited. */
     mutt_message(ngettext("%d label changed", "%d labels changed", num_changed), num_changed);
@@ -382,7 +413,6 @@ static enum IndexRetval op_edit_raw_message(struct Menu *menu, int op, struct In
   el_add_tagged(&el, idata->ctx, e, idata->tag);
   mutt_ev_message(idata->mailbox, &el, edit ? EVM_EDIT : EVM_VIEW);
   emaillist_clear(&el);
-  menu->redraw = REDRAW_FULL;
 
   return IR_VOID;
 }
@@ -400,7 +430,6 @@ static enum IndexRetval op_edit_type(struct Menu *menu, int op, struct IndexData
   if (idata->in_pager)
     return IR_CONTINUE;
 
-  menu->redraw = REDRAW_CURRENT;
   return IR_VOID;
 }
 
@@ -421,7 +450,6 @@ static enum IndexRetval op_enter_command(struct Menu *menu, int op, struct Index
   window_set_focus(idata->win_index);
   if (idata->ctx)
     mutt_check_rescore(idata->mailbox);
-  menu->redraw = REDRAW_FULL;
 
   return IR_VOID;
 }
@@ -464,7 +492,6 @@ static enum IndexRetval op_extract_keys(struct Menu *menu, int op, struct IndexD
   get_tagged_emails(idata, &el);
   crypt_extract_keys_from_messages(idata->mailbox, &el);
   emaillist_clear(&el);
-  menu->redraw = REDRAW_FULL;
 
   return IR_VOID;
 }
@@ -493,27 +520,7 @@ static enum IndexRetval op_flag_message(struct Menu *menu, int op, struct IndexD
   }
 
   if (count == 1)
-  {
-    const bool c_resolve = cs_subset_bool(idata->sub, "resolve");
-    if (c_resolve)
-    {
-      menu->current = ci_next_undeleted(m, menu->current);
-      if (menu->current == -1)
-      {
-        menu->current = menu->oldcurrent;
-        menu->redraw |= REDRAW_CURRENT;
-      }
-      else
-        menu->redraw |= REDRAW_MOTION_RESYNC;
-    }
-    else
-      menu->redraw |= REDRAW_CURRENT;
-  }
-  else
-  {
-    menu->redraw |= REDRAW_INDEX;
-  }
-  menu->redraw |= REDRAW_STATUS;
+    resolve_undeleted(idata);
 
   emaillist_clear(&el);
   return IR_VOID;
@@ -548,7 +555,6 @@ static enum IndexRetval op_forward_message(struct Menu *menu, int op, struct Ind
   }
   mutt_send_message(SEND_FORWARD, NULL, NULL, idata->ctx, &el, idata->sub);
   emaillist_clear(&el);
-  menu->redraw = REDRAW_FULL;
 
   return IR_VOID;
 }
@@ -580,7 +586,6 @@ static enum IndexRetval op_group_reply(struct Menu *menu, int op, struct IndexDa
   mutt_send_message(replyflags, NULL, NULL, idata->ctx, &el, idata->sub);
   emaillist_clear(&el);
 
-  menu->redraw = REDRAW_FULL;
   return IR_VOID;
 }
 
@@ -590,7 +595,6 @@ static enum IndexRetval op_group_reply(struct Menu *menu, int op, struct IndexDa
 static enum IndexRetval op_help(struct Menu *menu, int op, struct IndexData *idata)
 {
   mutt_help(MENU_MAIN);
-  menu->redraw = REDRAW_FULL;
   return IR_VOID;
 }
 
@@ -630,7 +634,6 @@ static enum IndexRetval op_jump(struct Menu *menu, int op, struct IndexData *ida
   if (idata->in_pager)
     return IR_CONTINUE;
 
-  menu->redraw = REDRAW_FULL;
   //QWQ
   return 0;
 }
@@ -656,7 +659,6 @@ static enum IndexRetval op_list_reply(struct Menu *menu, int op, struct IndexDat
                     idata->sub);
   emaillist_clear(&el);
 
-  menu->redraw = REDRAW_FULL;
   return IR_VOID;
 }
 
@@ -666,7 +668,6 @@ static enum IndexRetval op_list_reply(struct Menu *menu, int op, struct IndexDat
 static enum IndexRetval op_mail(struct Menu *menu, int op, struct IndexData *idata)
 {
   mutt_send_message(SEND_NO_FLAGS, NULL, NULL, idata->ctx, NULL, idata->sub);
-  menu->redraw = REDRAW_FULL;
   return IR_VOID;
 }
 
@@ -687,7 +688,6 @@ static enum IndexRetval op_mail_key(struct Menu *menu, int op, struct IndexData 
   if (!(WithCrypto & APPLICATION_PGP))
     return IR_NOT_IMPL;
   mutt_send_message(SEND_KEY, NULL, NULL, NULL, NULL, idata->sub);
-  menu->redraw = REDRAW_FULL;
 
   return IR_VOID;
 }
@@ -718,8 +718,6 @@ static enum IndexRetval op_main_break_thread(struct Menu *menu, int op, struct I
 
     if (idata->in_pager)
       return IR_CONTINUE;
-
-    menu->redraw |= REDRAW_INDEX;
   }
   else
   {
@@ -852,8 +850,6 @@ static enum IndexRetval op_main_collapse_thread(struct Menu *menu, int op,
     return IR_ERROR;
   }
 
-  menu->redraw = REDRAW_INDEX | REDRAW_STATUS;
-
   return IR_VOID;
 }
 
@@ -871,7 +867,6 @@ static enum IndexRetval op_main_delete_pattern(struct Menu *menu, int op,
     return IR_ERROR;
 
   mutt_pattern_func(idata->ctx, MUTT_DELETE, _("Delete messages matching: "));
-  menu->redraw |= REDRAW_INDEX | REDRAW_STATUS;
 
   return IR_VOID;
 }
@@ -935,7 +930,6 @@ static enum IndexRetval op_main_limit(struct Menu *menu, int op, struct IndexDat
         collapse_all(idata->ctx, menu, 0);
       mutt_draw_tree(idata->ctx->threads);
     }
-    menu->redraw = REDRAW_FULL;
   }
   if (lmt)
     mutt_message(_("To view all messages, limit to \"all\""));
@@ -982,7 +976,6 @@ static enum IndexRetval op_main_link_threads(struct Menu *menu, int op, struct I
   if (idata->in_pager)
     return IR_CONTINUE;
 
-  menu->redraw |= REDRAW_STATUS | REDRAW_INDEX;
   return IR_VOID;
 }
 
@@ -1057,7 +1050,6 @@ static enum IndexRetval op_main_modify_tags(struct Menu *menu, int op, struct In
     if (m->type == MUTT_NOTMUCH)
       nm_db_longrun_done(m);
 #endif
-    menu->redraw = REDRAW_STATUS | REDRAW_INDEX;
   }
   else
   {
@@ -1079,22 +1071,8 @@ static enum IndexRetval op_main_modify_tags(struct Menu *menu, int op, struct In
     if (idata->in_pager)
       return IR_CONTINUE;
 
-    const bool c_resolve = cs_subset_bool(idata->sub, "resolve");
-    if (c_resolve)
-    {
-      menu->current = ci_next_undeleted(idata->mailbox, menu->current);
-      if (menu->current == -1)
-      {
-        menu->current = menu->oldcurrent;
-        menu->redraw = REDRAW_CURRENT;
-      }
-      else
-        menu->redraw = REDRAW_MOTION_RESYNC;
-    }
-    else
-      menu->redraw = REDRAW_CURRENT;
+    resolve_undeleted(idata);
   }
-  menu->redraw |= REDRAW_STATUS;
 
   return IR_VOID;
 }
@@ -1208,7 +1186,6 @@ static enum IndexRetval op_main_next_new(struct Menu *menu, int op, struct Index
   if (idata->in_pager)
     return IR_CONTINUE;
 
-  menu->redraw = REDRAW_MOTION;
   return IR_VOID;
 }
 
@@ -1250,8 +1227,6 @@ static enum IndexRetval op_main_next_thread(struct Menu *menu, int op, struct In
   {
     return IR_CONTINUE;
   }
-  else
-    menu->redraw = REDRAW_MOTION;
 
   return IR_VOID;
 }
@@ -1279,8 +1254,6 @@ static enum IndexRetval op_main_next_undeleted(struct Menu *menu, int op,
   {
     return IR_CONTINUE;
   }
-  else
-    menu->redraw = REDRAW_MOTION;
 
   return IR_VOID;
 }
@@ -1330,8 +1303,6 @@ static enum IndexRetval op_main_prev_undeleted(struct Menu *menu, int op,
   {
     return IR_CONTINUE;
   }
-  else
-    menu->redraw = REDRAW_MOTION;
 
   return IR_VOID;
 }
@@ -1355,7 +1326,6 @@ static enum IndexRetval op_main_quasi_delete(struct Menu *menu, int op, struct I
 
   emaillist_clear(&el);
 
-  menu->redraw |= REDRAW_INDEX;
   return IR_VOID;
 }
 
@@ -1378,23 +1348,7 @@ static enum IndexRetval op_main_read_thread(struct Menu *menu, int op, struct In
   int rc = mutt_thread_set_flag(idata->mailbox, e, MUTT_READ, true,
                                 (op != OP_MAIN_READ_THREAD));
   if (rc != -1)
-  {
-    const bool c_resolve = cs_subset_bool(idata->sub, "resolve");
-    if (c_resolve)
-    {
-      menu->current = ((op == OP_MAIN_READ_THREAD) ? mutt_next_thread(e) :
-                                                     mutt_next_subthread(e));
-      if (menu->current == -1)
-      {
-        menu->current = menu->oldcurrent;
-      }
-      else if (idata->in_pager)
-      {
-        return IR_CONTINUE;
-      }
-    }
-    menu->redraw |= REDRAW_INDEX | REDRAW_STATUS;
-  }
+    resolve_thread(idata, (op == OP_MAIN_READ_SUBTHREAD));
 
   return IR_VOID;
 }
@@ -1417,8 +1371,6 @@ static enum IndexRetval op_main_root_message(struct Menu *menu, int op, struct I
   {
     return IR_CONTINUE;
   }
-  else
-    menu->redraw = REDRAW_MOTION;
 
   return IR_CONTINUE;
 }
@@ -1430,30 +1382,15 @@ static enum IndexRetval op_main_set_flag(struct Menu *menu, int op, struct Index
 {
   /* check_acl(MUTT_ACL_WRITE); */
   struct EmailList el = STAILQ_HEAD_INITIALIZER(el);
-  get_tagged_emails(idata, &el);
+  const int count = get_tagged_emails(idata, &el);
 
   if (mutt_change_flag(idata->mailbox, &el, (op == OP_MAIN_SET_FLAG)) == 0)
   {
-    menu->redraw |= REDRAW_STATUS;
-    const bool c_resolve = cs_subset_bool(idata->sub, "resolve");
-    if (idata->tag)
-      menu->redraw |= REDRAW_INDEX;
-    else if (c_resolve)
-    {
-      menu->current = ci_next_undeleted(idata->mailbox, menu->current);
-      if (menu->current == -1)
-      {
-        menu->current = menu->oldcurrent;
-        menu->redraw |= REDRAW_CURRENT;
-      }
-      else
-        menu->redraw |= REDRAW_MOTION_RESYNC;
-    }
-    else
-      menu->redraw |= REDRAW_CURRENT;
+    if (count == 1)
+      resolve_undeleted(idata);
   }
-  emaillist_clear(&el);
 
+  emaillist_clear(&el);
   return IR_VOID;
 }
 
@@ -1542,9 +1479,8 @@ static enum IndexRetval op_main_sync_folder(struct Menu *menu, int op, struct In
     return IR_CONTINUE;
   }
   else
-    menu->redraw = REDRAW_FULL;
 
-  return IR_VOID;
+    return IR_VOID;
 }
 
 /**
@@ -1553,7 +1489,6 @@ static enum IndexRetval op_main_sync_folder(struct Menu *menu, int op, struct In
 static enum IndexRetval op_main_tag_pattern(struct Menu *menu, int op, struct IndexData *idata)
 {
   mutt_pattern_func(idata->ctx, MUTT_TAG, _("Tag messages matching: "));
-  menu->redraw |= REDRAW_INDEX | REDRAW_STATUS;
 
   return IR_VOID;
 }
@@ -1573,7 +1508,6 @@ static enum IndexRetval op_main_undelete_pattern(struct Menu *menu, int op,
 
   if (mutt_pattern_func(idata->ctx, MUTT_UNDELETE, _("Undelete messages matching: ")) == 0)
   {
-    menu->redraw |= REDRAW_INDEX | REDRAW_STATUS;
   }
 
   return IR_VOID;
@@ -1584,8 +1518,7 @@ static enum IndexRetval op_main_undelete_pattern(struct Menu *menu, int op,
  */
 static enum IndexRetval op_main_untag_pattern(struct Menu *menu, int op, struct IndexData *idata)
 {
-  if (mutt_pattern_func(idata->ctx, MUTT_UNTAG, _("Untag messages matching: ")) == 0)
-    menu->redraw |= REDRAW_INDEX | REDRAW_STATUS;
+  mutt_pattern_func(idata->ctx, MUTT_UNTAG, _("Untag messages matching: "));
 
   return IR_VOID;
 }
@@ -1707,7 +1640,6 @@ static enum IndexRetval op_next_entry(struct Menu *menu, int op, struct IndexDat
   if (idata->in_pager)
     return IR_CONTINUE;
 
-  menu->redraw = REDRAW_MOTION;
   return IR_VOID;
 }
 
@@ -1727,7 +1659,6 @@ static enum IndexRetval op_pipe(struct Menu *menu, int op, struct IndexData *ida
   const bool c_imap_peek = cs_subset_bool(idata->sub, "imap_peek");
   if ((idata->mailbox->type == MUTT_IMAP) && !c_imap_peek)
   {
-    menu->redraw |= (idata->tag ? REDRAW_INDEX : REDRAW_CURRENT) | REDRAW_STATUS;
   }
 #endif
 
@@ -1749,7 +1680,6 @@ static enum IndexRetval op_prev_entry(struct Menu *menu, int op, struct IndexDat
   if (idata->in_pager)
     return IR_CONTINUE;
 
-  menu->redraw = REDRAW_MOTION;
   return IR_VOID;
 }
 
@@ -1769,7 +1699,6 @@ static enum IndexRetval op_print(struct Menu *menu, int op, struct IndexData *id
   const bool c_imap_peek = cs_subset_bool(idata->sub, "imap_peek");
   if ((idata->mailbox->type == MUTT_IMAP) && !c_imap_peek)
   {
-    menu->redraw |= (idata->tag ? REDRAW_INDEX : REDRAW_CURRENT) | REDRAW_STATUS;
   }
 #endif
 
@@ -1819,7 +1748,6 @@ static enum IndexRetval op_quit(struct Menu *menu, int op, struct IndexData *ida
                      &idata->cur);
       }
 
-      menu->redraw = REDRAW_FULL; /* new mail arrived? */
       OptSearchInvalid = true;
     }
   }
@@ -1833,7 +1761,6 @@ static enum IndexRetval op_quit(struct Menu *menu, int op, struct IndexData *ida
 static enum IndexRetval op_recall_message(struct Menu *menu, int op, struct IndexData *idata)
 {
   mutt_send_message(SEND_POSTPONED, NULL, NULL, idata->ctx, NULL, idata->sub);
-  menu->redraw = REDRAW_FULL;
   return IR_VOID;
 }
 
@@ -1844,7 +1771,6 @@ static enum IndexRetval op_redraw(struct Menu *menu, int op, struct IndexData *i
 {
   mutt_window_reflow(NULL);
   clearok(stdscr, true);
-  menu->redraw = REDRAW_FULL;
   return IR_VOID;
 }
 
@@ -1864,7 +1790,6 @@ static enum IndexRetval op_resend(struct Menu *menu, int op, struct IndexData *i
   }
 
   emaillist_clear(&el);
-  menu->redraw = REDRAW_FULL;
   return IR_VOID;
 }
 
@@ -1889,27 +1814,9 @@ static enum IndexRetval op_save(struct Menu *menu, int op, struct IndexData *ida
 
   const int rc = mutt_save_message(idata->mailbox, &el, save_opt, transform_opt);
   if ((rc == 0) && (save_opt == SAVE_MOVE))
-  {
-    menu->redraw |= REDRAW_STATUS;
-    const bool c_resolve = cs_subset_bool(idata->sub, "resolve");
-    if (idata->tag)
-      menu->redraw |= REDRAW_INDEX;
-    else if (c_resolve)
-    {
-      menu->current = ci_next_undeleted(idata->mailbox, menu->current);
-      if (menu->current == -1)
-      {
-        menu->current = menu->oldcurrent;
-        menu->redraw |= REDRAW_CURRENT;
-      }
-      else
-        menu->redraw |= REDRAW_MOTION_RESYNC;
-    }
-    else
-      menu->redraw |= REDRAW_CURRENT;
-  }
-  emaillist_clear(&el);
+    resolve_undeleted(idata);
 
+  emaillist_clear(&el);
   return IR_VOID;
 }
 
@@ -1924,8 +1831,6 @@ static enum IndexRetval op_search(struct Menu *menu, int op, struct IndexData *i
   menu->current = mutt_search_command(idata->ctx, idata->mailbox, menu->current, op);
   if (menu->current == -1)
     menu->current = menu->oldcurrent;
-  else
-    menu->redraw |= REDRAW_MOTION;
 
   return IR_VOID;
 }
@@ -1982,7 +1887,6 @@ static enum IndexRetval op_sort(struct Menu *menu, int op, struct IndexData *ida
   if (idata->in_pager)
     return IR_CONTINUE;
 
-  menu->redraw |= REDRAW_STATUS;
   return IR_VOID;
 }
 
@@ -2003,7 +1907,6 @@ static enum IndexRetval op_tag(struct Menu *menu, int op, struct IndexData *idat
       if (e->visible)
         mutt_set_flag(m, e, MUTT_TAG, false);
     }
-    menu->redraw |= REDRAW_STATUS | REDRAW_INDEX;
   }
   else
   {
@@ -2012,16 +1915,7 @@ static enum IndexRetval op_tag(struct Menu *menu, int op, struct IndexData *idat
       return IR_NO_ACTION;
 
     mutt_set_flag(idata->mailbox, e, MUTT_TAG, !e->tagged);
-
-    menu->redraw |= REDRAW_STATUS;
-    const bool c_resolve = cs_subset_bool(idata->sub, "resolve");
-    if (c_resolve && (menu->current < idata->mailbox->vcount - 1))
-    {
-      menu->current++;
-      menu->redraw |= REDRAW_MOTION_RESYNC;
-    }
-    else
-      menu->redraw |= REDRAW_CURRENT;
+    resolve_next(idata);
   }
 
   return IR_VOID;
@@ -2039,20 +1933,7 @@ static enum IndexRetval op_tag_thread(struct Menu *menu, int op, struct IndexDat
   int rc = mutt_thread_set_flag(idata->mailbox, e, MUTT_TAG, !e->tagged,
                                 (op != OP_TAG_THREAD));
   if (rc != -1)
-  {
-    const bool c_resolve = cs_subset_bool(idata->sub, "resolve");
-    if (c_resolve)
-    {
-      if (op == OP_TAG_THREAD)
-        menu->current = mutt_next_thread(e);
-      else
-        menu->current = mutt_next_subthread(e);
-
-      if (menu->current == -1)
-        menu->current = menu->oldcurrent;
-    }
-    menu->redraw |= REDRAW_INDEX | REDRAW_STATUS;
-  }
+    resolve_thread(idata, (op == OP_MAIN_READ_SUBTHREAD));
 
   return IR_VOID;
 }
@@ -2084,27 +1965,7 @@ static enum IndexRetval op_toggle_new(struct Menu *menu, int op, struct IndexDat
   }
 
   if (count == 1)
-  {
-    const bool c_resolve = cs_subset_bool(idata->sub, "resolve");
-    if (c_resolve)
-    {
-      menu->current = ci_next_undeleted(idata->mailbox, menu->current);
-      if (menu->current == -1)
-      {
-        menu->current = menu->oldcurrent;
-        menu->redraw |= REDRAW_CURRENT;
-      }
-      else
-        menu->redraw |= REDRAW_MOTION_RESYNC;
-    }
-    else
-      menu->redraw |= REDRAW_CURRENT;
-    menu->redraw |= REDRAW_STATUS;
-  }
-  else
-  {
-    menu->redraw |= REDRAW_STATUS | REDRAW_INDEX;
-  }
+    resolve_undeleted(idata);
 
   emaillist_clear(&el);
   return IR_VOID;
@@ -2119,8 +1980,6 @@ static enum IndexRetval op_toggle_write(struct Menu *menu, int op, struct IndexD
   {
     if (idata->in_pager)
       return IR_CONTINUE;
-
-    menu->redraw |= REDRAW_STATUS;
   }
 
   return IR_VOID;
@@ -2138,28 +1997,14 @@ static enum IndexRetval op_undelete(struct Menu *menu, int op, struct IndexData 
     return IR_ERROR;
 
   struct EmailList el = STAILQ_HEAD_INITIALIZER(el);
-  int count = get_tagged_emails(idata, &el);
+  const int count = get_tagged_emails(idata, &el);
   mutt_emails_set_flag(m, &el, MUTT_DELETE, 0);
   mutt_emails_set_flag(m, &el, MUTT_PURGE, 0);
   emaillist_clear(&el);
 
   if (count == 1)
-  {
-    const bool c_resolve = cs_subset_bool(idata->sub, "resolve");
-    if (c_resolve && (menu->current < (m->vcount - 1)))
-    {
-      menu->current++;
-      menu->redraw |= REDRAW_MOTION_RESYNC;
-    }
-    else
-      menu->redraw |= REDRAW_CURRENT;
-  }
-  else
-  {
-    menu->redraw |= REDRAW_INDEX;
-  }
+    resolve_next(idata);
 
-  menu->redraw |= REDRAW_STATUS;
   return IR_VOID;
 }
 
@@ -2186,21 +2031,9 @@ static enum IndexRetval op_undelete_thread(struct Menu *menu, int op, struct Ind
     rc = mutt_thread_set_flag(idata->mailbox, e, MUTT_PURGE, false,
                               (op != OP_UNDELETE_THREAD));
   }
-  if (rc != -1)
-  {
-    const bool c_resolve = cs_subset_bool(idata->sub, "resolve");
-    if (c_resolve)
-    {
-      if (op == OP_UNDELETE_THREAD)
-        menu->current = mutt_next_thread(e);
-      else
-        menu->current = mutt_next_subthread(e);
 
-      if (menu->current == -1)
-        menu->current = menu->oldcurrent;
-    }
-    menu->redraw |= REDRAW_INDEX | REDRAW_STATUS;
-  }
+  if (rc != -1)
+    resolve_thread(idata, (op == OP_MAIN_READ_SUBTHREAD));
 
   return IR_VOID;
 }
@@ -2226,7 +2059,6 @@ static enum IndexRetval op_view_attachments(struct Menu *menu, int op, struct In
   dlg_select_attachment(e);
   if (e->attach_del)
     idata->mailbox->changed = true;
-  menu->redraw = REDRAW_FULL;
   return IR_VOID;
 }
 
@@ -2282,14 +2114,12 @@ static enum IndexRetval op_main_imap_logout_all(struct Menu *menu, int op,
                      &idata->cur);
       }
       OptSearchInvalid = true;
-      menu->redraw = REDRAW_FULL;
       return IR_ERROR;
     }
   }
   imap_logout_all();
   mutt_message(_("Logged out of IMAP servers"));
   OptSearchInvalid = true;
-  menu->redraw = REDRAW_FULL;
 
   return IR_VOID;
 }
@@ -2304,8 +2134,7 @@ static enum IndexRetval op_catchup(struct Menu *menu, int op, struct IndexData *
   if (idata->ctx && (idata->mailbox->type == MUTT_NNTP))
   {
     struct NntpMboxData *mdata = idata->mailbox->mdata;
-    if (mutt_newsgroup_catchup(idata->mailbox, mdata->adata, mdata->group))
-      menu->redraw = REDRAW_INDEX | REDRAW_STATUS;
+    mutt_newsgroup_catchup(idata->mailbox, mdata->adata, mdata->group);
   }
 
   return IR_VOID;
@@ -2378,7 +2207,6 @@ static enum IndexRetval op_get_children(struct Menu *menu, int op, struct IndexD
     if (idata->in_pager)
     {
       menu->current = e_oldcur->vnum;
-      menu->redraw = REDRAW_STATUS | REDRAW_INDEX;
       return IR_CONTINUE;
     }
 
@@ -2404,7 +2232,6 @@ static enum IndexRetval op_get_children(struct Menu *menu, int op, struct IndexD
         }
       }
     }
-    menu->redraw = REDRAW_FULL;
   }
   else if (rc >= 0)
   {
@@ -2455,14 +2282,12 @@ static enum IndexRetval op_get_message(struct Menu *menu, int op, struct IndexDa
       if (e->vnum != -1)
       {
         menu->current = e->vnum;
-        menu->redraw = REDRAW_MOTION_RESYNC;
       }
       else if (e->collapsed)
       {
         mutt_uncollapse_thread(e);
         mutt_set_vnum(idata->mailbox);
         menu->current = e->vnum;
-        menu->redraw = REDRAW_MOTION_RESYNC;
       }
       else
         mutt_error(_("Message is not visible in limited view"));
@@ -2477,7 +2302,6 @@ static enum IndexRetval op_get_message(struct Menu *menu, int op, struct IndexDa
         mutt_sort_headers(idata->mailbox, idata->ctx->threads, false,
                           &idata->ctx->vsize);
         menu->current = e->vnum;
-        menu->redraw = REDRAW_FULL;
       }
       else if (rc > 0)
         mutt_error(_("Article %s not found on the server"), buf);
@@ -2599,7 +2423,6 @@ static enum IndexRetval op_post(struct Menu *menu, int op, struct IndexData *ida
                         NULL, NULL, idata->ctx, &el, idata->sub);
       emaillist_clear(&el);
     }
-    menu->redraw = REDRAW_FULL;
     return IR_VOID;
   }
 
@@ -2617,7 +2440,6 @@ static enum IndexRetval op_post(struct Menu *menu, int op, struct IndexData *ida
     }
     mutt_send_message(SEND_REPLY, NULL, NULL, idata->ctx, &el, idata->sub);
     emaillist_clear(&el);
-    menu->redraw = REDRAW_FULL;
     return IR_VOID;
   }
 
@@ -2676,7 +2498,6 @@ static enum IndexRetval op_main_entire_thread(struct Menu *menu, int op, struct 
   {
     /* nm_read_entire_thread() triggers mutt_sort_headers() if necessary */
     menu->current = e_oldcur->vnum;
-    menu->redraw = REDRAW_STATUS | REDRAW_INDEX;
 
     if (e_oldcur->collapsed || idata->ctx->collapsed)
     {
@@ -2787,7 +2608,6 @@ static enum IndexRetval op_main_windowed_vfolder_forward(struct Menu *menu, int 
 static enum IndexRetval op_main_fetch_mail(struct Menu *menu, int op, struct IndexData *idata)
 {
   pop_fetch_mail();
-  menu->redraw = REDRAW_FULL;
   return IR_VOID;
 }
 #endif

@@ -23,12 +23,15 @@
 #ifndef MUTT_INDEX_INDEX_DATA_H
 #define MUTT_INDEX_INDEX_DATA_H
 
+#include <stdio.h>
+
 struct Account;
 struct ConfigSubset;
 struct Context;
 struct CurrentEmail;
 struct Email;
 struct Mailbox;
+struct Menu;
 struct MuttWindow;
 struct Notify;
 
@@ -52,6 +55,7 @@ struct IndexData
   struct Mailbox *mailbox;  ///< Current Mailbox
   struct Email *email;      ///< Currently selected Email
   struct Notify *notify;    ///< Notifications handler
+  struct Menu *menu;        ///< Current Menu
 
   struct MuttWindow *win_index;
   struct MuttWindow *win_ibar;
