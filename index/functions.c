@@ -82,8 +82,7 @@ struct MuttWindow *dlg = NULL;
  */
 static int resolve_next(struct IndexData *idata)
 {
-  struct Menu *menu = idata->menu;
-  const int index = menu->current;
+  const int index = get_current_email_index(idata);
 
   const bool c_resolve = cs_subset_bool(idata->sub, "resolve");
   if (!c_resolve)
@@ -103,8 +102,7 @@ static int resolve_next(struct IndexData *idata)
  */
 static int resolve_thread(struct IndexData *idata, bool subthread)
 {
-  struct Menu *menu = idata->menu;
-  const int index = menu->current;
+  const int index = get_current_email_index(idata);
 
   const bool c_resolve = cs_subset_bool(idata->sub, "resolve");
   if (!c_resolve)
@@ -127,8 +125,7 @@ static int resolve_thread(struct IndexData *idata, bool subthread)
  */
 static int resolve_undeleted(struct IndexData *idata)
 {
-  struct Menu *menu = idata->menu;
-  const int index = menu->current;
+  const int index = get_current_email_index(idata);
 
   const bool c_resolve = cs_subset_bool(idata->sub, "resolve");
   if (!c_resolve)
