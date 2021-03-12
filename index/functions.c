@@ -182,7 +182,7 @@ static enum IndexRetval op_check_traditional(struct Menu *menu, int op, struct I
   {
     struct EmailList el = STAILQ_HEAD_INITIALIZER(el);
     el_add_tagged(&el, idata->ctx, e, idata->tag);
-    mutt_check_traditional_pgp(idata->mailbox, &el, &menu->redraw);
+    mutt_check_traditional_pgp(idata->mailbox, &el);
     emaillist_clear(&el);
   }
 
@@ -324,7 +324,7 @@ static enum IndexRetval op_display_message(struct Menu *menu, int op, struct Ind
   {
     struct EmailList el = STAILQ_HEAD_INITIALIZER(el);
     el_add_tagged(&el, idata->ctx, e, idata->tag);
-    mutt_check_traditional_pgp(idata->mailbox, &el, &menu->redraw);
+    mutt_check_traditional_pgp(idata->mailbox, &el);
     emaillist_clear(&el);
   }
   e = mutt_get_virt_email(idata->mailbox, menu->current);
@@ -406,7 +406,7 @@ static enum IndexRetval op_edit_raw_message(struct Menu *menu, int op, struct In
   {
     struct EmailList el = STAILQ_HEAD_INITIALIZER(el);
     el_add_tagged(&el, idata->ctx, e, idata->tag);
-    mutt_check_traditional_pgp(idata->mailbox, &el, &menu->redraw);
+    mutt_check_traditional_pgp(idata->mailbox, &el);
     emaillist_clear(&el);
   }
   struct EmailList el = STAILQ_HEAD_INITIALIZER(el);
@@ -551,7 +551,7 @@ static enum IndexRetval op_forward_message(struct Menu *menu, int op, struct Ind
   const bool c_pgp_auto_decode = cs_subset_bool(idata->sub, "pgp_auto_decode");
   if (c_pgp_auto_decode && (idata->tag || !(e->security & PGP_TRADITIONAL_CHECKED)))
   {
-    mutt_check_traditional_pgp(idata->mailbox, &el, &menu->redraw);
+    mutt_check_traditional_pgp(idata->mailbox, &el);
   }
   mutt_send_message(SEND_FORWARD, NULL, NULL, idata->ctx, &el, idata->sub);
   emaillist_clear(&el);
@@ -581,7 +581,7 @@ static enum IndexRetval op_group_reply(struct Menu *menu, int op, struct IndexDa
   const bool c_pgp_auto_decode = cs_subset_bool(idata->sub, "pgp_auto_decode");
   if (c_pgp_auto_decode && (idata->tag || !(e->security & PGP_TRADITIONAL_CHECKED)))
   {
-    mutt_check_traditional_pgp(idata->mailbox, &el, &menu->redraw);
+    mutt_check_traditional_pgp(idata->mailbox, &el);
   }
   mutt_send_message(replyflags, NULL, NULL, idata->ctx, &el, idata->sub);
   emaillist_clear(&el);
@@ -653,7 +653,7 @@ static enum IndexRetval op_list_reply(struct Menu *menu, int op, struct IndexDat
   const bool c_pgp_auto_decode = cs_subset_bool(idata->sub, "pgp_auto_decode");
   if (c_pgp_auto_decode && (idata->tag || !(e->security & PGP_TRADITIONAL_CHECKED)))
   {
-    mutt_check_traditional_pgp(idata->mailbox, &el, &menu->redraw);
+    mutt_check_traditional_pgp(idata->mailbox, &el);
   }
   mutt_send_message(SEND_REPLY | SEND_LIST_REPLY, NULL, NULL, idata->ctx, &el,
                     idata->sub);
@@ -2436,7 +2436,7 @@ static enum IndexRetval op_post(struct Menu *menu, int op, struct IndexData *ida
         cs_subset_bool(idata->sub, "pgp_auto_decode");
     if (c_pgp_auto_decode && (idata->tag || !(e->security & PGP_TRADITIONAL_CHECKED)))
     {
-      mutt_check_traditional_pgp(idata->mailbox, &el, &menu->redraw);
+      mutt_check_traditional_pgp(idata->mailbox, &el);
     }
     mutt_send_message(SEND_REPLY, NULL, NULL, idata->ctx, &el, idata->sub);
     emaillist_clear(&el);
