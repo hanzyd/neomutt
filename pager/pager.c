@@ -2324,23 +2324,6 @@ static void pager_custom_redraw(struct Menu *pager_menu)
  *   special sub-case of this mode is viewing attached email message
  *   it is recognized by presence of data->fp and data->body->email
  * - PAGER_MODE_OTHER does not expect data->email or data->body
- *
- * ------------------------------------------------------------------------
- * WARNING: CLOSE YOUR EDITOR AND GO AWAY. THIS CODE CONTAINS DISTURBING OR
- * INAPPROPRIATE IDEAS! YOUR SANITY IS IN DANGER! YOU'VE BEEN WARNED.
- *
- * Pager is delegating certain operations to index using a series of gross
- * hacks (each deserves a separate paragraph):
- * - TopLine&OldEmail hack
- * - stdin hack
- *
- *  TopLine & OldEmail
- *  ------------------
- *
- *  stdin hack
- *  ----------
- *
- * ------------------------------------------------------------------------
  */
 int mutt_pager(struct PagerView* view)
 {
@@ -2435,7 +2418,7 @@ int mutt_pager(struct PagerView* view)
   bool first                 = true;
   bool wrapped               = false;
 
-  //---------- initialize redraw data -----------------------------------------
+  //---------- initialize pager view  -----------------------------------------
 
   rd.view         = view;
   rd.indexlen     = c_pager_index_lines;
@@ -2476,8 +2459,6 @@ int mutt_pager(struct PagerView* view)
   rd.view->win_pager->size = MUTT_WIN_SIZE_MAXIMISE;
   mutt_window_reflow(dialog_find(rd.view->win_pager));
 
-  // Initialize variables
-
   if (view->mode == PAGER_MODE_EMAIL && !view->data->email->read)
   {
     view->data->ctx->msg_in_pager = view->data->email->msgno;
@@ -2494,14 +2475,16 @@ int mutt_pager(struct PagerView* view)
     (rd.line_info[i].syntax)[0].first = -1;
     (rd.line_info[i].syntax)[0].last  = -1;
   }
-
-  pager_menu = mutt_menu_new(MENU_PAGER);
+  //---------- setup pager menu------------------------------------------------
+  pager_menu                = mutt_menu_new(MENU_PAGER);
   pager_menu->pagelen       = view->win_pager->state.rows;
   pager_menu->win_index     = view->win_pager;
   pager_menu->win_ibar      = view->win_pbar;
   pager_menu->custom_redraw = pager_custom_redraw;
   pager_menu->redraw_data   = &rd;
   mutt_menu_push_current(pager_menu);
+
+  //---------- setup help menu ------------------------------------------------
 
   switch (view->mode) {
     case PAGER_MODE_EMAIL:
@@ -2536,6 +2519,11 @@ int mutt_pager(struct PagerView* view)
   view->win_pager->help_menu = MENU_PAGER;
   window_set_focus(view->win_pager);
 
+
+  //-------------------------------------------------------------------------
+  // ACT 3: Read user input and decide what to do with it
+  //        ...but also do a whole lot of other things.
+  //-------------------------------------------------------------------------
   while (ch != -1)
   {
     mutt_curses_set_cursor(MUTT_CURSOR_INVISIBLE);
@@ -2556,13 +2544,16 @@ int mutt_pager(struct PagerView* view)
     else
       mutt_window_move(rd.view->win_pbar, rd.view->win_pager->state.cols - 1, 0);
 
+    // force redraw of the screen at every iteration of the even loop
     mutt_refresh();
 
 
     //-------------------------------------------------------------------------
-    // FIXME: TopLine&OldEmail hack
+    // TopLine&OldEmail hack
     // this is when pager is re-called by index, after a hacky "delegation"
     // TopLine was keeping the old position where user was viewing someting
+    // FIXME: this really doesn't have to be inside 'while' loop
+    //        this is needed once when pager starts
     if (view->mode == PAGER_MODE_EMAIL
          && (OldEmail == view->data->email)
          && (TopLine != rd.topline)
@@ -2578,8 +2569,12 @@ int mutt_pager(struct PagerView* view)
     {
       OldEmail = NULL;
     }
+    //-------------------------------------------------------------------------
+    // Check if information in the status bar needs an update
+    // This is done because pager is a single-threaded application, which
+    // tries to emulate cuncurency.
+    //-------------------------------------------------------------------------
     bool do_new_mail = false;
-
     if (m && !OptAttachMsg)
     {
       int oldcount = m->msg_count;
@@ -2627,7 +2622,6 @@ int mutt_pager(struct PagerView* view)
 
             bool verbose = m->verbose;
             m->verbose = false;
-            // TODO check in mutt_update_index really needs ctx
             mutt_update_index(rd.menu, view->data->ctx, check, oldcount, e);
             m->verbose = verbose;
 
@@ -2666,6 +2660,7 @@ int mutt_pager(struct PagerView* view)
         }
       }
     }
+    //-------------------------------------------------------------------------
 
     if (SigWinch)
     {
@@ -2699,11 +2694,16 @@ int mutt_pager(struct PagerView* view)
       }
       continue;
     }
-
-    // FIXME: severe badness
-    // Sometimes a non-printable char that represents a code of the needed
-    // operation is read here, as if user pressed it. It looks like something
-    // inserts those chars into input stream
+    //-------------------------------------------------------------------------
+    // Finally, read user's key press
+    //-------------------------------------------------------------------------
+    // km_dokey() reads not only user's key strokes, but also a MacroBuffer
+    // MacroBuffer may contain OP codes of the operations.
+    // MacroBuffer is global
+    // OP codes inserted into the MacroBuffer but various functions.
+    // One of such functions is `mutt_enter_command()`
+    // Some OP codes are not handled by pager, they cause pager to quit returning
+    // OP code to index. Index hadles the operation and then restarts pager
     ch = km_dokey(MENU_PAGER);
 
     if (ch >= 0)
@@ -2724,10 +2724,14 @@ int mutt_pager(struct PagerView* view)
 
     switch (ch)
     {
+      //=======================================================================
+
       case OP_EXIT:
         rc = -1;
         ch = -1;
         break;
+
+      //=======================================================================
 
       case OP_QUIT:
       {
@@ -2740,6 +2744,8 @@ int mutt_pager(struct PagerView* view)
         }
         break;
       }
+
+      //=======================================================================
 
       case OP_NEXT_PAGE:
         if (rd.line_info[rd.curline].offset < (rd.sb.st_size - 1))
@@ -2759,6 +2765,8 @@ int mutt_pager(struct PagerView* view)
         }
         break;
 
+      //=======================================================================
+
       case OP_PREV_PAGE:
         if (rd.topline == 0)
         {
@@ -2770,6 +2778,8 @@ int mutt_pager(struct PagerView* view)
                                   rd.line_info, rd.topline, rd.hide_quoted);
         }
         break;
+
+      //=======================================================================
 
       case OP_NEXT_LINE:
         if (rd.line_info[rd.curline].offset < (rd.sb.st_size - 1))
@@ -2788,6 +2798,8 @@ int mutt_pager(struct PagerView* view)
           mutt_message(_("Bottom of message is shown"));
         break;
 
+      //=======================================================================
+
       case OP_PREV_LINE:
         if (rd.topline)
           rd.topline = up_n_lines(1, rd.line_info, rd.topline, rd.hide_quoted);
@@ -2795,12 +2807,16 @@ int mutt_pager(struct PagerView* view)
           mutt_error(_("Top of message is shown"));
         break;
 
+      //=======================================================================
+
       case OP_PAGER_TOP:
         if (rd.topline)
           rd.topline = 0;
         else
           mutt_error(_("Top of message is shown"));
         break;
+
+      //=======================================================================
 
       case OP_HALF_UP:
         if (rd.topline)
@@ -2812,6 +2828,8 @@ int mutt_pager(struct PagerView* view)
         else
           mutt_error(_("Top of message is shown"));
         break;
+
+      //=======================================================================
 
       case OP_HALF_DOWN:
         if (rd.line_info[rd.curline].offset < (rd.sb.st_size - 1))
@@ -2831,6 +2849,8 @@ int mutt_pager(struct PagerView* view)
           ch = -1;
         }
         break;
+
+      //=======================================================================
 
       case OP_SEARCH_NEXT:
       case OP_SEARCH_OPPOSITE:
@@ -2911,6 +2931,7 @@ int mutt_pager(struct PagerView* view)
         }
         /* no previous search pattern */
         /* fallthrough */
+      //=======================================================================
 
       case OP_SEARCH:
       case OP_SEARCH_REVERSE:
@@ -3042,6 +3063,8 @@ int mutt_pager(struct PagerView* view)
         pager_menu->redraw = REDRAW_BODY;
         break;
 
+      //=======================================================================
+
       case OP_SEARCH_TOGGLE:
         if (rd.search_compiled)
         {
@@ -3049,6 +3072,8 @@ int mutt_pager(struct PagerView* view)
           pager_menu->redraw = REDRAW_BODY;
         }
         break;
+
+      //=======================================================================
 
       case OP_SORT:
       case OP_SORT_REVERSE:
@@ -3061,6 +3086,8 @@ int mutt_pager(struct PagerView* view)
           rc = OP_DISPLAY_MESSAGE;
         }
         break;
+
+      //=======================================================================
 
       case OP_HELP:
         if (InHelp)
@@ -3076,6 +3103,8 @@ int mutt_pager(struct PagerView* view)
         InHelp = false;
         break;
 
+      //=======================================================================
+
       case OP_PAGER_HIDE_QUOTED:
         if (!rd.has_types)
           break;
@@ -3086,7 +3115,7 @@ int mutt_pager(struct PagerView* view)
         else
           pager_menu->redraw = REDRAW_BODY;
         break;
-
+      //=======================================================================
       case OP_PAGER_SKIP_QUOTED:
       {
         if (!rd.has_types)
@@ -3149,6 +3178,8 @@ int mutt_pager(struct PagerView* view)
         break;
       }
 
+      //=======================================================================
+
       case OP_PAGER_SKIP_HEADERS:
       {
         if (!rd.has_types)
@@ -3189,6 +3220,8 @@ int mutt_pager(struct PagerView* view)
         break;
       }
 
+      //=======================================================================
+
       case OP_PAGER_BOTTOM: /* move to the end of the file */
         if (rd.line_info[rd.curline].offset < (rd.sb.st_size - 1))
         {
@@ -3208,20 +3241,25 @@ int mutt_pager(struct PagerView* view)
           mutt_error(_("Bottom of message is shown"));
         break;
 
+      //=======================================================================
+
       case OP_REDRAW:
         mutt_window_reflow(NULL);
         clearok(stdscr, true);
         pager_menu->redraw = REDRAW_FULL;
         break;
 
+      //=======================================================================
+
       case OP_NULL:
         km_error_key(MENU_PAGER);
         break;
 
-        /* --------------------------------------------------------------------
-         * The following are operations on the current message rather than
-         * adjusting the view of the message.  */
 
+      //=======================================================================
+      // The following are operations on the current message rather than
+      // adjusting the view of the message.
+      //=======================================================================
       case OP_BOUNCE_MESSAGE:
       {
         if (!assert_pager_mode(view->mode == PAGER_MODE_EMAIL || view->mode == PAGER_MODE_ATTACH_E))
@@ -3240,6 +3278,8 @@ int mutt_pager(struct PagerView* view)
         break;
       }
 
+      //=======================================================================
+
       case OP_RESEND:
         if (!assert_pager_mode(view->mode == PAGER_MODE_EMAIL || view->mode == PAGER_MODE_ATTACH_E))
           break;
@@ -3253,6 +3293,8 @@ int mutt_pager(struct PagerView* view)
           mutt_resend_message(NULL, view->data->ctx, view->data->email, NeoMutt->sub);
         pager_menu->redraw = REDRAW_FULL;
         break;
+
+      //=======================================================================
 
       case OP_COMPOSE_TO_SENDER:
         if (!assert_pager_mode(view->mode == PAGER_MODE_EMAIL || view->mode == PAGER_MODE_ATTACH_E))
@@ -3273,6 +3315,8 @@ int mutt_pager(struct PagerView* view)
         pager_menu->redraw = REDRAW_FULL;
         break;
 
+      //=======================================================================
+
       case OP_CHECK_TRADITIONAL:
         if (!assert_pager_mode(view->mode == PAGER_MODE_EMAIL))
           break;
@@ -3285,6 +3329,8 @@ int mutt_pager(struct PagerView* view)
         }
         break;
 
+      //=======================================================================
+
       case OP_CREATE_ALIAS:
         if (!assert_pager_mode(view->mode == PAGER_MODE_EMAIL || view->mode == PAGER_MODE_ATTACH_E))
           break;
@@ -3295,6 +3341,8 @@ int mutt_pager(struct PagerView* view)
           al = mutt_get_address(view->data->email->env, NULL);
         alias_create(al, NeoMutt->sub);
         break;
+
+      //=======================================================================
 
       case OP_PURGE_MESSAGE:
       case OP_DELETE:
@@ -3325,6 +3373,8 @@ int mutt_pager(struct PagerView* view)
         break;
       }
 
+      //=======================================================================
+
       case OP_MAIN_SET_FLAG:
       case OP_MAIN_CLEAR_FLAG:
       {
@@ -3347,6 +3397,8 @@ int mutt_pager(struct PagerView* view)
         emaillist_clear(&el);
         break;
       }
+
+      //=======================================================================
 
       case OP_DELETE_THREAD:
       case OP_DELETE_SUBTHREAD:
@@ -3395,6 +3447,8 @@ int mutt_pager(struct PagerView* view)
         break;
       }
 
+      //=======================================================================
+
       case OP_DISPLAY_ADDRESS:
         if (!assert_pager_mode(view->mode == PAGER_MODE_EMAIL || view->mode == PAGER_MODE_ATTACH_E))
           break;
@@ -3403,6 +3457,8 @@ int mutt_pager(struct PagerView* view)
         else
           mutt_display_address(view->data->email->env);
         break;
+
+      //=======================================================================
 
       case OP_ENTER_COMMAND:
         old_PagerIndexLines = c_pager_index_lines;
@@ -3434,6 +3490,8 @@ int mutt_pager(struct PagerView* view)
         ch = 0;
         break;
 
+      //=======================================================================
+
       case OP_FLAG_MESSAGE:
       {
         if (!assert_pager_mode(view->mode == PAGER_MODE_EMAIL))
@@ -3455,6 +3513,8 @@ int mutt_pager(struct PagerView* view)
         break;
       }
 
+      //=======================================================================
+
       case OP_PIPE:
         if (!assert_pager_mode(view->mode == PAGER_MODE_EMAIL || view->mode == PAGER_MODE_ATTACH))
           break;
@@ -3469,6 +3529,8 @@ int mutt_pager(struct PagerView* view)
           emaillist_clear(&el);
         }
         break;
+
+      //=======================================================================
 
       case OP_PRINT:
         if (!assert_pager_mode(view->mode == PAGER_MODE_EMAIL || view->mode == PAGER_MODE_ATTACH))
@@ -3485,6 +3547,8 @@ int mutt_pager(struct PagerView* view)
         }
         break;
 
+      //=======================================================================
+
       case OP_MAIL:
         if (!assert_pager_mode(view->mode == PAGER_MODE_EMAIL))
           break;
@@ -3495,6 +3559,8 @@ int mutt_pager(struct PagerView* view)
         mutt_send_message(SEND_NO_FLAGS, NULL, NULL, view->data->ctx, NULL, NeoMutt->sub);
         pager_menu->redraw = REDRAW_FULL;
         break;
+
+      //=======================================================================
 
 #ifdef USE_NNTP
       case OP_POST:
@@ -3517,6 +3583,8 @@ int mutt_pager(struct PagerView* view)
         pager_menu->redraw = REDRAW_FULL;
         break;
       }
+
+      //=======================================================================
 
       case OP_FORWARD_TO_GROUP:
       {
@@ -3546,6 +3614,8 @@ int mutt_pager(struct PagerView* view)
         pager_menu->redraw = REDRAW_FULL;
         break;
       }
+
+      //=======================================================================
 
       case OP_FOLLOWUP:
         if (!assert_pager_mode(view->mode == PAGER_MODE_EMAIL || view->mode == PAGER_MODE_ATTACH_E))
@@ -3589,8 +3659,11 @@ int mutt_pager(struct PagerView* view)
           pager_menu->redraw = REDRAW_FULL;
           break;
         }
+        // else fallthrough
+
+      //=======================================================================
+
 #endif
-      /* fallthrough */
       case OP_REPLY:
       case OP_GROUP_REPLY:
       case OP_GROUP_CHAT_REPLY:
@@ -3623,6 +3696,8 @@ int mutt_pager(struct PagerView* view)
         break;
       }
 
+      //=======================================================================
+
       case OP_RECALL_MESSAGE:
       {
         if (!assert_pager_mode(view->mode == PAGER_MODE_EMAIL))
@@ -3638,6 +3713,8 @@ int mutt_pager(struct PagerView* view)
         pager_menu->redraw = REDRAW_FULL;
         break;
       }
+
+      //=======================================================================
 
       case OP_FORWARD_MESSAGE:
         if (!assert_pager_mode(view->mode == PAGER_MODE_EMAIL || view->mode == PAGER_MODE_ATTACH_E))
@@ -3659,6 +3736,8 @@ int mutt_pager(struct PagerView* view)
         pager_menu->redraw = REDRAW_FULL;
         break;
 
+      //=======================================================================
+
       case OP_DECRYPT_SAVE:
         if (!WithCrypto)
         {
@@ -3666,6 +3745,8 @@ int mutt_pager(struct PagerView* view)
           break;
         }
       /* fallthrough */
+      //=======================================================================
+
       case OP_SAVE:
         if (view->mode == PAGER_MODE_ATTACH)
         {
@@ -3674,6 +3755,8 @@ int mutt_pager(struct PagerView* view)
           break;
         }
       /* fallthrough */
+      //=======================================================================
+
       case OP_COPY_MESSAGE:
       case OP_DECODE_SAVE:
       case OP_DECODE_COPY:
@@ -3715,12 +3798,16 @@ int mutt_pager(struct PagerView* view)
         break;
       }
 
+      //=======================================================================
+
       case OP_SHELL_ESCAPE:
         if (mutt_shell_escape())
         {
           mutt_mailbox_check(m, MUTT_MAILBOX_CHECK_FORCE);
         }
         break;
+
+      //=======================================================================
 
       case OP_TAG:
       {
@@ -3737,6 +3824,8 @@ int mutt_pager(struct PagerView* view)
         }
         break;
       }
+
+      //=======================================================================
 
       case OP_TOGGLE_NEW:
       {
@@ -3764,6 +3853,8 @@ int mutt_pager(struct PagerView* view)
         break;
       }
 
+      //=======================================================================
+
       case OP_UNDELETE:
       {
         if (!assert_pager_mode(view->mode == PAGER_MODE_EMAIL))
@@ -3787,6 +3878,8 @@ int mutt_pager(struct PagerView* view)
         }
         break;
       }
+
+      //=======================================================================
 
       case OP_UNDELETE_THREAD:
       case OP_UNDELETE_SUBTHREAD:
@@ -3828,13 +3921,19 @@ int mutt_pager(struct PagerView* view)
         break;
       }
 
+      //=======================================================================
+
       case OP_VERSION:
         mutt_message(mutt_make_version());
         break;
 
+      //=======================================================================
+
       case OP_MAILBOX_LIST:
         mutt_mailbox_list();
         break;
+
+      //=======================================================================
 
       case OP_VIEW_ATTACHMENTS:
         if (view->flags & MUTT_PAGER_ATTACHMENT)
@@ -3850,6 +3949,8 @@ int mutt_pager(struct PagerView* view)
           m->changed = true;
         pager_menu->redraw = REDRAW_FULL;
         break;
+
+      //=======================================================================
 
       case OP_MAIL_KEY:
       {
@@ -3871,6 +3972,8 @@ int mutt_pager(struct PagerView* view)
         pager_menu->redraw = REDRAW_FULL;
         break;
       }
+
+      //=======================================================================
 
       case OP_EDIT_LABEL:
       {
@@ -3895,9 +3998,13 @@ int mutt_pager(struct PagerView* view)
         break;
       }
 
+      //=======================================================================
+
       case OP_FORGET_PASSPHRASE:
         crypt_forget_passphrase();
         break;
+
+      //=======================================================================
 
       case OP_EXTRACT_KEYS:
       {
@@ -3916,13 +4023,19 @@ int mutt_pager(struct PagerView* view)
         break;
       }
 
+      //=======================================================================
+
       case OP_WHAT_KEY:
         mutt_what_key();
         break;
 
+      //=======================================================================
+
       case OP_CHECK_STATS:
         mutt_check_stats(m);
         break;
+
+      //=======================================================================
 
 #ifdef USE_SIDEBAR
       case OP_SIDEBAR_FIRST:
@@ -3942,10 +4055,14 @@ int mutt_pager(struct PagerView* view)
         break;
       }
 
+      //=======================================================================
+
       case OP_SIDEBAR_TOGGLE_VISIBLE:
         bool_str_toggle(NeoMutt->sub, "sidebar_visible", NULL);
         mutt_window_reflow(dialog_find(rd.view->win_pager));
         break;
+
+      //=======================================================================
 #endif
 
       default:
@@ -3953,6 +4070,9 @@ int mutt_pager(struct PagerView* view)
         break;
     }
   }
+  //-------------------------------------------------------------------------
+  // END OF ACT 3: Read user input loop - while (ch != -1)
+  //-------------------------------------------------------------------------
 
   mutt_file_fclose(&rd.fp);
   if (view->mode == PAGER_MODE_EMAIL)
