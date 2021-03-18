@@ -21,6 +21,7 @@
  */
 
 #define TEST_NO_MAIN
+#include <stdarg.h>
 #include "config.h"
 #include "acutest.h"
 #include "mutt/lib.h"
@@ -59,11 +60,28 @@ void test_nm_parse_type_from_query(void)
   }
 }
 
+static int test_log_capture(time_t stamp, const char *file, int line, const char
+    *function, enum LogLevel level, ...)
+{
+
+  {
+    char buf[1024];
+
+    va_list ap;
+    va_start(ap, level);
+    const char *fmt = va_arg(ap, const char *);
+    vsnprintf(buf, sizeof(buf), fmt, ap);
+    va_end(ap);
+
+    TEST_CHECK(level == LL_ERROR);
+    TEST_CHECK(mutt_str_equal(buf, "failed to parse notmuch query type: junk"));
+  }
+
+  return 0;
+}
+
 void test_nm_string_to_query_type(void)
 {
-  // enum NmQueryType nm_string_to_query_type(const char *str);
-  MuttLogger = log_disp_null;
-
   {
     TEST_CHECK(nm_string_to_query_type("threads") == NM_QUERY_TYPE_THREADS);
   }
@@ -74,6 +92,7 @@ void test_nm_string_to_query_type(void)
 
   // Test that we're handling the error condition.
   {
+    MuttLogger = test_log_capture;
     TEST_CHECK(nm_string_to_query_type("junk") == NM_QUERY_TYPE_MESGS);
   }
 }
