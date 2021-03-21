@@ -2179,13 +2179,13 @@ static void pager_custom_redraw(struct Menu *pager_menu)
     do
     {
       mutt_window_move(rd->view->win_pager, 0, 0);
-      rd->curline = rd->topline;
-      rd->oldtopline = rd->topline;
-      rd->lines = 0;
+      rd->curline      = rd->topline;
+      rd->oldtopline   = rd->topline;
+      rd->lines        = 0;
       rd->force_redraw = false;
 
-      while ((rd->lines < rd->view->win_pager->state.rows) &&
-             (rd->line_info[rd->curline].offset <= rd->sb.st_size - 1))
+      while ((rd->lines < rd->view->win_pager->state.rows)
+          && (rd->line_info[rd->curline].offset <= rd->sb.st_size - 1))
       {
         if (display_line(rd->fp, &rd->last_pos, &rd->line_info, rd->curline,
                          &rd->last_line, &rd->max_line,
@@ -2464,9 +2464,9 @@ int mutt_pager(struct PagerView* view)
     view->data->ctx->msg_in_pager = view->data->email->msgno;
     mutt_set_flag(m, view->data->email, MUTT_READ, true);
   }
-
   rd.max_line  = LINES; // number of lines on screen, from curses
   rd.line_info = mutt_mem_calloc(rd.max_line, sizeof(struct Line));
+
   for (size_t i = 0; i < rd.max_line; i++)
   {
     rd.line_info[i].type              = -1;
@@ -2475,6 +2475,7 @@ int mutt_pager(struct PagerView* view)
     (rd.line_info[i].syntax)[0].first = -1;
     (rd.line_info[i].syntax)[0].last  = -1;
   }
+
   //---------- setup pager menu------------------------------------------------
   pager_menu                = mutt_menu_new(MENU_PAGER);
   pager_menu->pagelen       = view->win_pager->state.rows;
@@ -2483,6 +2484,31 @@ int mutt_pager(struct PagerView* view)
   pager_menu->custom_redraw = pager_custom_redraw;
   pager_menu->redraw_data   = &rd;
   mutt_menu_push_current(pager_menu);
+
+  //---------- restore global state if needed ---------------------------------
+
+  // FIXME: TopLine&OldEmail hack
+  // this is when pager is re-called by index, after a hacky "delegation"
+  // TopLine was keeping the old position where user was viewing someting
+  // we cannot just jump to TopLine, we need to scroll to it in increments
+  // of current screen height (otherwise crash!)
+  while (view->mode == PAGER_MODE_EMAIL
+       && (OldEmail == view->data->email) // are we "resuming" to the same Email?
+       && (TopLine != rd.topline)         // is saved offset different?
+       && rd.line_info[rd.curline].offset < (rd.sb.st_size - 1))
+  {
+    // needed to avoid SIGSEGV
+    pager_custom_redraw(pager_menu);
+    // trick user, as if nothing happened
+    // scroll down to previosly saved offset
+    rd.topline = ((TopLine - rd.topline) > rd.lines)
+        ? rd.topline + rd.lines
+        : TopLine;
+  }
+
+  TopLine  = 0;
+  OldEmail = NULL;
+
 
   //---------- setup help menu ------------------------------------------------
 
@@ -2548,27 +2574,6 @@ int mutt_pager(struct PagerView* view)
     mutt_refresh();
 
 
-    //-------------------------------------------------------------------------
-    // TopLine&OldEmail hack
-    // this is when pager is re-called by index, after a hacky "delegation"
-    // TopLine was keeping the old position where user was viewing someting
-    // FIXME: this really doesn't have to be inside 'while' loop
-    //        this is needed once when pager starts
-    if (view->mode == PAGER_MODE_EMAIL
-         && (OldEmail == view->data->email)
-         && (TopLine != rd.topline)
-         && (rd.line_info[rd.curline].offset < (rd.sb.st_size - 1)))
-    {
-      if ((TopLine - rd.topline) > rd.lines)
-        rd.topline += rd.lines;
-      else
-        rd.topline = TopLine;
-      continue;
-    }
-    else
-    {
-      OldEmail = NULL;
-    }
     //-------------------------------------------------------------------------
     // Check if information in the status bar needs an update
     // This is done because pager is a single-threaded application, which
@@ -4088,7 +4093,7 @@ int mutt_pager(struct PagerView* view)
         // FIXME: TopLine&OldEmail hack
         // This happens when pager "delegates" something to index, quitting,
         // and expects to be re-opened again
-        TopLine = rd.topline;
+        TopLine  = rd.topline;
         OldEmail = view->data->email;
         break;
     }
