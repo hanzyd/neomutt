@@ -2500,6 +2500,15 @@ int mutt_pager(struct PagerView* view)
   }
   unlink(view->data->fname);
 
+  //---------- setup pager menu------------------------------------------------
+  pager_menu                = mutt_menu_new(MENU_PAGER);
+  pager_menu->pagelen       = view->win_pager->state.rows;
+  pager_menu->win_index     = view->win_pager;
+  pager_menu->win_ibar      = view->win_pbar;
+  pager_menu->custom_redraw = pager_custom_redraw;
+  pager_menu->redraw_data   = &rd;
+  mutt_menu_push_current(pager_menu);
+
   //---------- restore global state if needed ---------------------------------
   // FIXME: TopLine&OldEmail hack
   // this is when pager is re-called by index, after a hacky "delegation"
@@ -2522,15 +2531,6 @@ int mutt_pager(struct PagerView* view)
 
   TopLine  = 0;
   OldEmail = NULL;
-
-  //---------- setup pager menu------------------------------------------------
-  pager_menu                = mutt_menu_new(MENU_PAGER);
-  pager_menu->pagelen       = view->win_pager->state.rows;
-  pager_menu->win_index     = view->win_pager;
-  pager_menu->win_ibar      = view->win_pbar;
-  pager_menu->custom_redraw = pager_custom_redraw;
-  pager_menu->redraw_data   = &rd;
-  mutt_menu_push_current(pager_menu);
 
   //---------- show windows, set focus and visibility --------------------------
   if (rd.view->win_index)
