@@ -190,8 +190,6 @@ struct PagerRedrawData
 static int TopLine = 0;
 static struct Email *OldEmail = NULL;
 
-static bool InHelp = false;
-
 static int braille_line = -1;
 static int braille_col = -1;
 
@@ -2320,10 +2318,10 @@ static const struct Mapping* pager_resolve_help_mapping(enum PagerMode mode, enu
         result = PagerNormalHelp;
       break;
 
-    case PAGER_MODE_OTHER:
-      if (InHelp)
+    case PAGER_MODE_HELP:
         result = PagerHelpHelp;
-      else
+
+    case PAGER_MODE_OTHER:
         result = PagerHelp;
       break;
 
@@ -2404,6 +2402,7 @@ int mutt_pager(struct PagerView* view)
         }
         break;
 
+      case PAGER_MODE_HELP:
       case PAGER_MODE_OTHER:
         assert(!view->data->email);
         assert(!view->data->body);
@@ -3094,17 +3093,14 @@ int mutt_pager(struct PagerView* view)
       //=======================================================================
 
       case OP_HELP:
-        if (InHelp)
+        if (view->mode == PAGER_MODE_HELP)
         {
           /* don't let the user enter the help-menu from the help screen! */
           mutt_error(_("Help is currently being shown"));
           break;
         }
-
-        InHelp = true;
         mutt_help(MENU_PAGER);
         pager_menu->redraw = REDRAW_FULL;
-        InHelp = false;
         break;
 
       //=======================================================================

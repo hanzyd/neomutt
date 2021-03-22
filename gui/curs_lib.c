@@ -691,7 +691,9 @@ int mutt_do_pager(struct PagerView *view)
   assert(view);
   assert(view->data);
   assert(view->data->fname);
-  assert(view->mode == PAGER_MODE_ATTACH || view->mode == PAGER_MODE_OTHER);
+  assert(view->mode == PAGER_MODE_ATTACH
+      || view->mode == PAGER_MODE_HELP
+      || view->mode == PAGER_MODE_OTHER);
 
   struct MuttWindow *dlg =
       mutt_window_new(WT_DLG_DO_PAGER, MUTT_WIN_ORIENT_VERTICAL, MUTT_WIN_SIZE_MAXIMISE,
