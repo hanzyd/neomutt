@@ -2333,7 +2333,8 @@ int mutt_pager(struct PagerView* view)
   assert(view);
   assert(view->mode > PAGER_MODE_UNKNOWN && view->mode < PAGER_MODE_MAX);
   assert(view->data); // view can't exist in a vacuum
-
+  assert(view->win_pager);
+  assert(view->win_pbar);
 
   switch (view->mode)
   // TODO cast data do concrete type here and run corresponding function
@@ -2399,117 +2400,34 @@ int mutt_pager(struct PagerView* view)
       cs_subset_number(NeoMutt->sub, "skip_quoted_offset");
 
   //---------- local variables ------------------------------------------------
-  struct PagerRedrawData rd         = { 0 };
-  struct Menu*           pager_menu = NULL;
   struct Mailbox*        m          = view->data->ctx ? view->data->ctx->mailbox : NULL;
+  struct Menu* pager_menu           = NULL;
+  struct PagerRedrawData rd         = { 0 };
+  static char searchbuf[256]        = { 0 };
+  char buf[1024]                    = { 0 };
+  int ch                            = 0;
+  int rc                            = -1;
+  int searchctx                     = 0;
+  int index_space                   = m ? MIN(c_pager_index_lines, m->vcount) : c_pager_index_lines;
+  int old_PagerIndexLines           = index_space; // some people want to resize it while inside the pager
+  bool first                        = true;
+  bool wrapped                      = false;
 
-  static char searchbuf[256] = { 0 };
 #ifdef USE_NNTP
-  char* followup_to          = NULL;
+  char*                 followup_to = NULL;
 #endif
-  char buf[1024];
 
-  int ch                     = 0;
-  int rc                     = -1;
-  int searchctx              = 0;
-  int index_space            = m ? MIN(c_pager_index_lines, m->vcount) : c_pager_index_lines;
-  int old_PagerIndexLines    = index_space;     // some people want to resize it while inside the pager
-
-  bool first                 = true;
-  bool wrapped               = false;
-
-  //---------- initialize pager view  -----------------------------------------
-
-  rd.view         = view;
-  rd.indexlen     = c_pager_index_lines;
-  rd.indicator    = rd.indexlen / 3;
-  rd.searchbuf    = searchbuf;
-  rd.fp           = fopen(view->data->fname, "r");
-  rd.has_types    = ((view->mode == PAGER_MODE_EMAIL) || (view->flags & MUTT_SHOWCOLOR))
-      ? MUTT_TYPES
-      : 0;                           // main message or rfc822 attachment
-
-  if (!rd.fp)
-  {
-    mutt_perror(view->data->fname);
-    return -1;
-  }
-
-  if (stat(view->data->fname, &rd.sb) != 0)
-  {
-    mutt_perror(view->data->fname);
-    mutt_file_fclose(&rd.fp);
-    return -1;
-  }
-  unlink(view->data->fname);
+  //---------- setup flags ----------------------------------------------------
 
   // TODO: @flatcap: are MUTT_SHOWCOLOR and MUTT_SHOWFLAT mutually exclusive?
   if (!(view->flags & MUTT_SHOWCOLOR))
     view->flags |= MUTT_SHOWFLAT;
-
-
-  if (rd.view->win_index)
-  {
-    rd.view->win_index->size         = MUTT_WIN_SIZE_FIXED;
-    rd.view->win_index->req_rows     = index_space;
-    rd.view->win_index->parent->size = MUTT_WIN_SIZE_MINIMISE;
-    window_set_visible(rd.view->win_index->parent, (index_space > 0));
-  }
-  window_set_visible(rd.view->win_pager->parent, true);
-  rd.view->win_pager->size = MUTT_WIN_SIZE_MAXIMISE;
-  mutt_window_reflow(dialog_find(rd.view->win_pager));
 
   if (view->mode == PAGER_MODE_EMAIL && !view->data->email->read)
   {
     view->data->ctx->msg_in_pager = view->data->email->msgno;
     mutt_set_flag(m, view->data->email, MUTT_READ, true);
   }
-  rd.max_line  = LINES; // number of lines on screen, from curses
-  rd.line_info = mutt_mem_calloc(rd.max_line, sizeof(struct Line));
-
-  for (size_t i = 0; i < rd.max_line; i++)
-  {
-    rd.line_info[i].type              = -1;
-    rd.line_info[i].search_cnt        = -1;
-    rd.line_info[i].syntax            = mutt_mem_malloc(sizeof(struct TextSyntax));
-    (rd.line_info[i].syntax)[0].first = -1;
-    (rd.line_info[i].syntax)[0].last  = -1;
-  }
-
-  //---------- setup pager menu------------------------------------------------
-  pager_menu                = mutt_menu_new(MENU_PAGER);
-  pager_menu->pagelen       = view->win_pager->state.rows;
-  pager_menu->win_index     = view->win_pager;
-  pager_menu->win_ibar      = view->win_pbar;
-  pager_menu->custom_redraw = pager_custom_redraw;
-  pager_menu->redraw_data   = &rd;
-  mutt_menu_push_current(pager_menu);
-
-  //---------- restore global state if needed ---------------------------------
-
-  // FIXME: TopLine&OldEmail hack
-  // this is when pager is re-called by index, after a hacky "delegation"
-  // TopLine was keeping the old position where user was viewing someting
-  // we cannot just jump to TopLine, we need to scroll to it in increments
-  // of current screen height (otherwise crash!)
-  while (view->mode == PAGER_MODE_EMAIL
-       && (OldEmail == view->data->email) // are we "resuming" to the same Email?
-       && (TopLine != rd.topline)         // is saved offset different?
-       && rd.line_info[rd.curline].offset < (rd.sb.st_size - 1))
-  {
-    // needed to avoid SIGSEGV
-    pager_custom_redraw(pager_menu);
-    // trick user, as if nothing happened
-    // scroll down to previosly saved offset
-    rd.topline = ((TopLine - rd.topline) > rd.lines)
-        ? rd.topline + rd.lines
-        : TopLine;
-  }
-
-  TopLine  = 0;
-  OldEmail = NULL;
-
-
   //---------- setup help menu ------------------------------------------------
 
   switch (view->mode) {
@@ -2543,8 +2461,87 @@ int mutt_pager(struct PagerView* view)
   }
 
   view->win_pager->help_menu = MENU_PAGER;
-  window_set_focus(view->win_pager);
 
+  //---------- initialize redraw data  -----------------------------------------
+  view->win_pager->size = MUTT_WIN_SIZE_MAXIMISE;
+  rd.view               = view;
+  rd.indexlen           = c_pager_index_lines;
+  rd.indicator          = rd.indexlen / 3;
+  rd.searchbuf          = searchbuf;
+  rd.max_line           = LINES; // number of lines on screen, from curses
+  rd.line_info          = mutt_mem_calloc(rd.max_line, sizeof(struct Line));
+  rd.fp                 = fopen(view->data->fname, "r");
+  rd.has_types          = ((view->mode == PAGER_MODE_EMAIL) || (view->flags & MUTT_SHOWCOLOR))
+      ? MUTT_TYPES
+      : 0;                           // main message or rfc822 attachment
+
+  for (size_t i = 0; i < rd.max_line; i++)
+  {
+    rd.line_info[i].type              = -1;
+    rd.line_info[i].search_cnt        = -1;
+    rd.line_info[i].syntax            = mutt_mem_malloc(sizeof(struct TextSyntax));
+    (rd.line_info[i].syntax)[0].first = -1;
+    (rd.line_info[i].syntax)[0].last  = -1;
+  }
+
+  // ---------- try to open the data file -------------------------------------
+  if (!rd.fp)
+  {
+    mutt_perror(view->data->fname);
+    return -1;
+  }
+
+  if (stat(view->data->fname, &rd.sb) != 0)
+  {
+    mutt_perror(view->data->fname);
+    mutt_file_fclose(&rd.fp);
+    return -1;
+  }
+  unlink(view->data->fname);
+
+  //---------- restore global state if needed ---------------------------------
+  // FIXME: TopLine&OldEmail hack
+  // this is when pager is re-called by index, after a hacky "delegation"
+  // TopLine was keeping the old position where user was viewing someting
+  // we cannot just jump to TopLine, we need to scroll to it in increments
+  // of current screen height (otherwise crash!)
+  while (view->mode == PAGER_MODE_EMAIL
+       && (OldEmail == view->data->email) // are we "resuming" to the same Email?
+       && (TopLine != rd.topline)         // is saved offset different?
+       && rd.line_info[rd.curline].offset < (rd.sb.st_size - 1))
+  {
+    // needed to avoid SIGSEGV
+    pager_custom_redraw(pager_menu);
+    // trick user, as if nothing happened
+    // scroll down to previosly saved offset
+    rd.topline = ((TopLine - rd.topline) > rd.lines)
+        ? rd.topline + rd.lines
+        : TopLine;
+  }
+
+  TopLine  = 0;
+  OldEmail = NULL;
+
+  //---------- setup pager menu------------------------------------------------
+  pager_menu                = mutt_menu_new(MENU_PAGER);
+  pager_menu->pagelen       = view->win_pager->state.rows;
+  pager_menu->win_index     = view->win_pager;
+  pager_menu->win_ibar      = view->win_pbar;
+  pager_menu->custom_redraw = pager_custom_redraw;
+  pager_menu->redraw_data   = &rd;
+  mutt_menu_push_current(pager_menu);
+
+  //---------- show windows, set focus and visibility --------------------------
+  if (rd.view->win_index)
+  {
+    rd.view->win_index->size         = MUTT_WIN_SIZE_FIXED;
+    rd.view->win_index->req_rows     = index_space;
+    rd.view->win_index->parent->size = MUTT_WIN_SIZE_MINIMISE;
+    window_set_visible(rd.view->win_index->parent, (index_space > 0));
+  }
+  window_set_visible(rd.view->win_pager->parent, true);
+  mutt_window_reflow(dialog_find(rd.view->win_pager));
+  window_set_focus(view->win_pager);
 
   //-------------------------------------------------------------------------
   // ACT 3: Read user input and decide what to do with it
