@@ -83,8 +83,10 @@ enum CommandResult mutt_parse_hook(struct Buffer *buf, struct Buffer *s,
   struct Hook *hook = NULL;
   int rc = MUTT_CMD_ERROR;
   bool pat_not = false;
+  bool noregex = false;
   regex_t *rx = NULL;
   struct PatternList *pat = NULL;
+  const bool folder_or_mbox = (data & (MUTT_FOLDER_HOOK | MUTT_MBOX_HOOK));
 
   struct Buffer *cmd = mutt_buffer_pool_get();
   struct Buffer *pattern = mutt_buffer_pool_get();
@@ -99,6 +101,17 @@ enum CommandResult mutt_parse_hook(struct Buffer *buf, struct Buffer *s,
     }
 
     mutt_extract_token(pattern, s, MUTT_TOKEN_NO_FLAGS);
+    if (folder_or_mbox && mutt_str_equal(mutt_buffer_string(pattern), "-noregex"))
+    {
+      noregex = true;
+      if (!MoreArgs(s))
+      {
+        mutt_buffer_printf(err, _("%s: too few arguments"), buf->data);
+        rc = MUTT_CMD_WARNING;
+        goto cleanup;
+      }
+      mutt_extract_token(pattern, s, MUTT_TOKEN_NO_FLAGS);
+    }
 
     if (!MoreArgs(s))
     {
@@ -130,7 +143,7 @@ enum CommandResult mutt_parse_hook(struct Buffer *buf, struct Buffer *s,
 
   const char *const c_default_hook =
       cs_subset_string(NeoMutt->sub, "default_hook");
-  if (data & (MUTT_FOLDER_HOOK | MUTT_MBOX_HOOK))
+  if (folder_or_mbox)
   {
     /* Accidentally using the ^ mailbox shortcut in the .neomuttrc is a
      * common mistake */
@@ -142,7 +155,7 @@ enum CommandResult mutt_parse_hook(struct Buffer *buf, struct Buffer *s,
 
     struct Buffer *tmp = mutt_buffer_pool_get();
     mutt_buffer_copy(tmp, pattern);
-    mutt_buffer_expand_path_regex(tmp, true);
+    mutt_buffer_expand_path_regex(tmp, !noregex);
 
     /* Check for other mailbox shortcuts that expand to the empty string.
      * This is likely a mistake too */
@@ -153,7 +166,14 @@ enum CommandResult mutt_parse_hook(struct Buffer *buf, struct Buffer *s,
       goto cleanup;
     }
 
-    mutt_buffer_copy(pattern, tmp);
+    if (noregex)
+    {
+      mutt_file_sanitize_regex(pattern, mutt_buffer_string(tmp));
+    }
+    else
+    {
+      mutt_buffer_copy(pattern, tmp);
+    }
     mutt_buffer_pool_release(&tmp);
   }
 #ifdef USE_COMP_MBOX
